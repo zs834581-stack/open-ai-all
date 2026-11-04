@@ -84,7 +84,7 @@ jobs:
         run: |
           cd launcher
           npm install
-          npx --yes pkg@5.8.1 . --targets node22-win-x64 --output "$GITHUB_WORKSPACE/dist/launcher.exe"
+          npx --yes pkg@5.8.1 . --targets node18-win-x64 --output "$GITHUB_WORKSPACE/dist/launcher.exe"
 
       - name: Assemble dist
         shell: bash

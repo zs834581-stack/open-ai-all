@@ -3,9 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "description": "本地 AI 网关启动器（new-api 聚合网关 + Chat2API 转换层），可打包为 Windows exe / 服务",
+  "bin": "launcher.js",
+  "main": "launcher.js",
   "scripts": {
     "start": "node launcher.js start",
-    "build": "pkg . --targets node22-win-x64 --output dist/launcher.exe"
+    "build": "pkg . --targets node18-win-x64 --output dist/launcher.exe"
   },
   "dependencies": {},
   "devDependencies": {
