@@ -68,6 +68,27 @@ jobs:
             -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${VERSION_VAL:-dev}'" \
             -o "$GITHUB_WORKSPACE/dist/new-api.exe" .
 
+      # Chat2API（Electron 主转换层）：electron-vite 构建前端/主进程 → electron-builder --dir 出 win-unpacked
+      # 产出的整个 win-unpacked 目录即"绿色版"，拷入 dist/chat2api 后 launcher 可直接拉起 Chat2API.exe
+      - name: Build Chat2API (Electron)
+        shell: bash
+        run: |
+          set -e
+          if [ ! -f src/chat2api/package.json ]; then
+            echo "::warning::src/chat2api 不存在，跳过 Chat2API 构建（dist 将不含转换层）"
+            exit 0
+          fi
+          cd src/chat2api
+          echo "=== 安装依赖 ==="
+          npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+          echo "=== electron-vite 构建 ==="
+          npm run build
+          test -f out/main/index.js || { echo "electron-vite 构建失败：out/main/index.js 不存在"; exit 1; }
+          echo "=== electron-builder --dir（免安装包/免签名） ==="
+          npx electron-builder --dir --win --x64 --publish never
+          test -f dist/win-unpacked/Chat2API.exe || { echo "未生成 dist/win-unpacked/Chat2API.exe"; ls -R dist | head -40; exit 1; }
+          echo "构建完成：$(du -sh dist/win-unpacked | cut -f1)"
+
       - name: Install optional free-api deps
         shell: bash
         continue-on-error: true
@@ -89,17 +110,34 @@ jobs:
       - name: Assemble dist
         shell: bash
         run: |
+          set -e
+          # new-api 工作目录（launcher 也会自动创建，这里预建保证解压即用；
+          # 注意 upload-artifact 会丢弃空目录，故放一个占位文件）
           mkdir -p dist/data
+          echo "new-api 运行数据（数据库/日志）存放目录，勿删。" > dist/data/README.txt
+
           # 可选 Node 转换服务（若已克隆）
           if [ -d src/free-api ] && [ -n "$(ls -A src/free-api 2>/dev/null)" ]; then
             mkdir -p dist/free-api
             cp -r src/free-api/* dist/free-api/
           fi
-          # Chat2API（主转换层，Electron 桌面应用）：
-          # 请在本地 build:win 后把 Chat2API.exe 放入 dist/chat2api/，本 CI 不自动构建 Electron。
+
+          # Chat2API（主转换层）：win-unpacked 整目录平铺进 dist/chat2api
+          mkdir -p dist/chat2api
+          if [ -d src/chat2api/dist/win-unpacked ]; then
+            cp -r src/chat2api/dist/win-unpacked/. dist/chat2api/
+            test -f dist/chat2api/Chat2API.exe || { echo "拷贝后未找到 Chat2API.exe"; exit 1; }
+            echo "Chat2API 已就位: $(du -sh dist/chat2api | cut -f1)"
+          else
+            echo "::warning::未找到 win-unpacked，dist/chat2api 为空（可用 config.json 关闭 chat2api）"
+            echo "此目录预留给 Chat2API（Electron 桌面应用）。" > dist/chat2api/README.txt
+          fi
+
           cp launcher/config.json dist/config.json
-          echo "=== dist 内容 ==="
-          ls -R dist
+          echo "=== dist 顶层 ==="
+          ls -la dist
+          echo "=== 总体积 ==="
+          du -sh dist
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -107,3 +145,4 @@ jobs:
           name: proxy-desktop-windows
           path: dist
           retention-days: 30
+          compression-level: 6

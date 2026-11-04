@@ -95,17 +95,20 @@ proxy-desktop/
    git push -u origin main
    ```
 3. 推送后，仓库的 **Actions → Build Windows Release** 会自动：
-   - 用 Go 编译 `new-api.exe`
+   - 用 Go 编译 `new-api.exe`（含 bun 构建的内嵌 Web 前端）
+   - 用 electron-vite + electron-builder `--dir` 构建 **Chat2API**（Electron 绿色版，产物 `dist/chat2api/Chat2API.exe`）
    - 用 `pkg` 把启动器打包成 `launcher.exe`
-   - 汇总到 `dist/` 并上传为 **artifact**（压缩包）。
+   - 汇总到 `dist/`（含 `data/` 空目录占位、`chat2api/`、`config.json`）并上传为 **artifact**（压缩包）。
 4. 在 Actions 运行结果页下载 `proxy-desktop-windows` 压缩包，解压后：
-   - 双击 `launcher.exe` → 自动启动网关并打开 `http://localhost:3000` 的 Web 控制台。
+   - 双击 `launcher.exe`（建议 `launcher.exe start`）→ 自动启动 new-api + Chat2API，并打开 `http://localhost:3000` 的 Web 控制台（首次登录 `root` / `123456`）。
+   - `data/` 若被误删，launcher 启动时会自动重建，无需手动创建。
    - 或在解压目录执行 `launcher.exe install-service` 注册为 Windows 服务（需先 `npm install node-windows`）。
 
 ## 配置说明（launcher/config.json）
 
-- `newApi.port`：网关 Web 控制台端口（默认 3000）。
-- 转换层（Chat2API 等）按各自 README 配置端口与账号；在 new-api 控制台建「自定义(OpenAI 兼容)」渠道，Base URL 填转换层地址，密钥填转换层生成的 key。
+- `newApi.port`：网关 Web 控制台端口（默认 3000）；`newApi.dataDir`：数据库/日志目录（默认 `./data`，launcher 自动创建）。
+- `chat2api.enabled`：是否随启动器拉起 Chat2API（默认 `true`）；`chat2api.port` 默认 8080。
+- 转换层（Chat2API 等）按各自 README 配置端口与账号；在 new-api 控制台建「自定义(OpenAI 兼容)」渠道，Base URL 填 `http://localhost:8080/v1`，密钥填转换层生成的 key。
 
 ## 免责声明
 

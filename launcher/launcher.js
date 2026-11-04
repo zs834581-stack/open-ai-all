@@ -27,6 +27,17 @@ const CONFIG_PATH = fs.existsSync(EXTERNAL_CONFIG)
 
 const procs = new Map();
 
+/** 递归创建目录，返回是否可用（打包后目录可能缺失，需自愈） */
+function ensureDir(dir, label) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    return true;
+  } catch (e) {
+    console.error(`无法创建${label || '目录'} ${dir}: ${e.message}`);
+    return false;
+  }
+}
+
 function loadConfig() {
   if (!fs.existsSync(CONFIG_PATH)) {
     console.error('找不到 config.json，请确认与 launcher.exe 同目录。');
@@ -55,8 +66,11 @@ function startNewApi(cfg) {
   }
   const args = [];
   if (cfg.newApi.port) args.push('--port', String(cfg.newApi.port));
+  // new-api 以 dataDir 为工作目录存放数据库/日志，目录不存在会导致启动失败 → 先自愈创建
+  const dataDir = path.resolve(ROOT, cfg.newApi.dataDir || './data');
+  if (!ensureDir(dataDir, ' new-api 数据目录')) return null;
   const child = spawn(exe, args, {
-    cwd: path.resolve(ROOT, cfg.newApi.dataDir || '.'),
+    cwd: dataDir,
     env: { ...process.env, ...(cfg.newApi.env || {}), PORT: String(cfg.newApi.port || 3000) },
     windowsHide: true,
   });
