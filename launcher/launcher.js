@@ -1,0 +1,186 @@
+#!/usr/bin/env node
+/**
+ * proxy-desktop launcher
+ * 拉起 new-api.exe（网关 + Web 控制台）与 5 个国产 free-api 的 Node 服务，并打开 Web 控制台。
+ * 用 pkg 打包成单文件 exe；用 node-windows 可注册为 Windows 服务。
+ * 路径约定（打包后的 dist 目录）：
+ *   ./new-api.exe
+ *   ./free-api/<name>/
+ *   ./config.json
+ */
+
+const { spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const net = require('net');
+
+const ROOT = __dirname;
+// 优先读取 exe / 脚本同目录的外部 config.json（打包后可直接修改），
+// 不存在时回退到打包内嵌的配置。
+const EXTERNAL_CONFIG = path.join(path.dirname(process.execPath), 'config.json');
+const CONFIG_PATH = fs.existsSync(EXTERNAL_CONFIG)
+  ? EXTERNAL_CONFIG
+  : path.join(ROOT, 'config.json');
+
+const procs = new Map();
+
+function loadConfig() {
+  if (!fs.existsSync(CONFIG_PATH)) {
+    console.error('找不到 config.json，请确认与 launcher.exe 同目录。');
+    process.exit(1);
+  }
+  return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+}
+
+function log(name, msg) {
+  console.log(`[${name}] ${msg}`);
+}
+
+function pipe(name, stream) {
+  if (!stream) return;
+  stream.on('data', (d) => process.stdout.write(`[${name}] ${d}`));
+}
+
+function startNewApi(cfg) {
+  const exe = path.resolve(ROOT, cfg.newApi.exePath);
+  if (!fs.existsSync(exe)) {
+    console.error(
+      `new-api 可执行文件不存在: ${exe}\n` +
+      `请确认 dist 内已包含 new-api.exe（由 CI 构建或手动放入）。`
+    );
+    return null;
+  }
+  const args = [];
+  if (cfg.newApi.port) args.push('--port', String(cfg.newApi.port));
+  const child = spawn(exe, args, {
+    cwd: path.resolve(ROOT, cfg.newApi.dataDir || '.'),
+    env: { ...process.env, ...(cfg.newApi.env || {}), PORT: String(cfg.newApi.port || 3000) },
+    windowsHide: true,
+  });
+  pipe('new-api', child.stdout);
+  pipe('new-api', child.stderr);
+  child.on('exit', (code) => log('new-api', `进程退出 code=${code}`));
+  return child;
+}
+
+function startFreeApi(svc) {
+  const dir = path.resolve(ROOT, svc.dir);
+  if (!fs.existsSync(dir)) {
+    console.error(`free-api 目录不存在: ${dir}\n请确认 dist/free-api 已包含该服务。`);
+    return null;
+  }
+  const child = spawn(svc.cmd || 'npm start', [], {
+    cwd: dir,
+    shell: true,
+    env: { ...process.env, PORT: String(svc.port) },
+    windowsHide: true,
+  });
+  pipe(svc.name, child.stdout);
+  pipe(svc.name, child.stderr);
+  child.on('exit', (code) => log(svc.name, `进程退出 code=${code}`));
+  return child;
+}
+
+function startAll(cfg) {
+  log('launcher', '启动中…');
+  const na = startNewApi(cfg);
+  if (na) procs.set('new-api', na);
+  for (const svc of cfg.freeApis || []) {
+    if (svc.enabled === false) continue;
+    const c = startFreeApi(svc);
+    if (c) procs.set(svc.name, c);
+  }
+  if (cfg.autoOpenWebUI) {
+    setTimeout(() => openWebUI(cfg.newApi.port || 3000, cfg.webUIPath || '/'), 2500);
+  }
+}
+
+function stopAll() {
+  for (const [name, c] of procs) {
+    try {
+      if (process.platform === 'win32') spawn('taskkill', ['/pid', String(c.pid), '/f', '/t']);
+      else c.kill('SIGTERM');
+    } catch (e) {}
+    log(name, '已请求停止');
+  }
+  procs.clear();
+}
+
+function openWebUI(port, p) {
+  const url = `http://localhost:${port}${p || '/'}`;
+  log('launcher', `打开 Web 控制台: ${url}`);
+  if (process.platform === 'win32') spawn('cmd', ['/c', 'start', '', url], { windowsHide: true });
+  else if (process.platform === 'darwin') spawn('open', [url]);
+  else spawn('xdg-open', [url]);
+}
+
+function checkPort(port) {
+  return new Promise((resolve) => {
+    const sock = new net.Socket();
+    sock.setTimeout(1000);
+    sock.on('connect', () => { sock.destroy(); resolve(true); });
+    sock.on('timeout', () => { sock.destroy(); resolve(false); });
+    sock.on('error', () => { sock.destroy(); resolve(false); });
+    sock.connect(port, '127.0.0.1');
+  });
+}
+
+async function showStatus(cfg) {
+  const port = cfg.newApi.port || 3000;
+  const up = await checkPort(port);
+  console.log(`new-api  Web 控制台 (${up ? '运行中' : '未运行'}): http://localhost:${port}`);
+  for (const svc of cfg.freeApis || []) {
+    if (svc.enabled === false) continue;
+    const s = await checkPort(svc.port);
+    console.log(`free-api ${svc.name.padEnd(9)} 端口 ${svc.port} (${s ? '监听中' : '未监听'})`);
+  }
+}
+
+function installService() {
+  let nodeWindows;
+  try { nodeWindows = require('node-windows'); }
+  catch (e) { console.error('未安装 node-windows，请先: npm install node-windows（服务注册为可选项）'); process.exit(1); }
+  const Service = nodeWindows.Service;
+  const svc = new Service({
+    name: 'ProxyDesktop',
+    description: '本地 AI 网关：new-api + 国产免费模型（Web 控制台 localhost:3000）',
+    script: path.join(ROOT, 'launcher.js'),
+  });
+  svc.on('install', () => { log('service', '已安装，正在启动…'); svc.start(); });
+  svc.on('alreadyinstalled', () => log('service', '已经安装过了'));
+  svc.on('error', (e) => log('service', `错误: ${e.message || e}`));
+  svc.install();
+}
+
+function uninstallService() {
+  let nodeWindows;
+  try { nodeWindows = require('node-windows'); }
+  catch (e) { console.error('未安装 node-windows，请先: npm install node-windows（服务注册为可选项）'); process.exit(1); }
+  const Service = nodeWindows.Service;
+  const svc = new Service({ name: 'ProxyDesktop', script: path.join(ROOT, 'launcher.js') });
+  svc.on('uninstall', () => log('service', '已卸载'));
+  svc.on('error', (e) => log('service', `错误: ${e.message || e}`));
+  svc.uninstall();
+}
+
+function main() {
+  const cmd = process.argv[2] || 'start';
+  const cfg = loadConfig();
+  switch (cmd) {
+    case 'start': startAll(cfg); break;
+    case 'stop': stopAll(); process.exit(0);
+    case 'restart': stopAll(); setTimeout(() => startAll(cfg), 600); break;
+    case 'status': showStatus(cfg).then(() => process.exit(0)); return;
+    case 'open': openWebUI(cfg.newApi.port || 3000, cfg.webUIPath || '/'); process.exit(0);
+    case 'install-service': installService(); return;
+    case 'uninstall-service': uninstallService(); return;
+    default:
+      console.log('用法: launcher.exe [start|stop|restart|status|open|install-service|uninstall-service]');
+      process.exit(1);
+  }
+  process.on('SIGINT', () => { stopAll(); process.exit(0); });
+  process.on('SIGTERM', () => { stopAll(); process.exit(0); });
+  process.on('exit', () => stopAll());
+}
+
+main();

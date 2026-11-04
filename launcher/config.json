@@ -1,0 +1,20 @@
+{
+  "newApi": {
+    "exePath": "./new-api.exe",
+    "port": 3000,
+    "dataDir": "./data",
+    "env": {
+      "TZ": "Asia/Shanghai",
+      "SESSION_SECRET": "change_me_to_random"
+    }
+  },
+  "freeApis": [
+    { "name": "deepseek", "dir": "./free-api/deepseek-free-api", "port": 8001, "cmd": "npm start", "enabled": true },
+    { "name": "kimi",     "dir": "./free-api/kimi-free-api",     "port": 8002, "cmd": "npm start", "enabled": true },
+    { "name": "qwen",     "dir": "./free-api/qwen-free-api",     "port": 8003, "cmd": "npm start", "enabled": true },
+    { "name": "doubao",   "dir": "./free-api/doubao-free-api",   "port": 8004, "cmd": "npm start", "enabled": true },
+    { "name": "glm",      "dir": "./free-api/glm-free-api",      "port": 8005, "cmd": "npm start", "enabled": true }
+  ],
+  "autoOpenWebUI": true,
+  "webUIPath": "/"
+}

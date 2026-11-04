@@ -1,0 +1,11 @@
+# 依赖与构建产物
+node_modules/
+dist/
+data/
+*.exe
+.env
+
+# 操作系统
+Thumbs.db
+Desktop.ini
+.DS_Store

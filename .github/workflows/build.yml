@@ -1,0 +1,77 @@
+name: Build Windows Release
+
+# 推送到私人仓库（或手动触发）后，自动编译出 Windows 可执行包
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # 若 src/ 未提交源码，则在此克隆（保证可独立构建）
+      - name: Ensure sources
+        shell: bash
+        run: |
+          if [ ! -f src/new-api/go.mod ]; then
+            git clone --depth 1 https://github.com/QuantumNous/new-api.git src/new-api
+          fi
+          for p in deepseek-free-api kimi-free-api qwen-free-api doubao-free-api glm-free-api; do
+            if [ ! -d "src/free-api/$p" ]; then
+              git clone --depth 1 "https://github.com/LLM-Red-Team/$p.git" "src/free-api/$p"
+            fi
+          done
+
+      - name: Build new-api.exe
+        shell: bash
+        run: |
+          cd src/new-api
+          go build -o "$GITHUB_WORKSPACE/dist/new-api.exe" .
+
+      - name: Install free-api deps
+        shell: bash
+        run: |
+          for d in src/free-api/*/; do
+            echo "npm install in $d"
+            (cd "$d" && npm install)
+          done
+
+      - name: Build launcher.exe
+        shell: bash
+        run: |
+          cd launcher
+          npm install
+          npx --yes pkg@5.8.1 . --targets node22-win-x64 --output "$GITHUB_WORKSPACE/dist/launcher.exe"
+
+      - name: Assemble dist
+        shell: bash
+        run: |
+          mkdir -p dist/free-api dist/data
+          cp -r src/free-api/* dist/free-api/
+          cp launcher/config.json dist/config.json
+          echo "=== dist 内容 ==="
+          ls -R dist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: proxy-desktop-windows
+          path: dist
+          retention-days: 30
