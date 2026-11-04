@@ -16,44 +16,67 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # new-api/go.mod 要求 go 1.26.10，直接读 go.mod 安装对应版本
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: src/new-api/go.mod
+          check-latest: true
+          cache: false
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
+      # new-api 前端用 bun + rsbuild 构建
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       # 若 src/ 未提交源码，则在此克隆网关与可选清理版转换服务
-      # （原 LLM-Red-Team 组织已下架，此处只用仍在维护且已清理恶意代码的版本）
+      # （原 LLM-Red-Team 组织已下架，此处只用仍在维护且已清理恶意代码的版本；失败不阻塞）
       - name: Ensure sources
         shell: bash
         run: |
           if [ ! -f src/new-api/go.mod ]; then
             git clone --depth 1 https://github.com/QuantumNous/new-api.git src/new-api
           fi
+          mkdir -p src/free-api
           if [ ! -d src/free-api/deepseek-free-api ]; then
-            git clone --depth 1 https://github.com/Fu-Jie/deepseek-free-api.git src/free-api/deepseek-free-api
+            git clone --depth 1 https://github.com/Fu-Jie/deepseek-free-api.git src/free-api/deepseek-free-api || echo "skip deepseek-free-api (optional)"
           fi
           if [ ! -d src/free-api/glm-free-api ]; then
-            git clone --depth 1 https://github.com/evanoooo/GLM-Free-API.git src/free-api/glm-free-api
+            git clone --depth 1 https://github.com/evanoooo/GLM-Free-API.git src/free-api/glm-free-api || echo "skip glm-free-api (optional)"
           fi
 
+      # 关键：new-api 通过 //go:embed web/dist 内嵌前端，
+      # 必须先构建 web 前端生成 web/dist，否则 go build 报 "pattern web/dist: no matching files found"
       - name: Build new-api.exe
         shell: bash
         run: |
-          cd src/new-api
-          go build -o "$GITHUB_WORKSPACE/dist/new-api.exe" .
+          set -e
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          cd src/new-api/web
+          bun install --frozen-lockfile
+          VERSION_VAL="$(cat ../VERSION 2>/dev/null || true)"
+          DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION="${VERSION_VAL:-dev}" bun run build
+          test -f dist/index.html || { echo "web/dist/index.html 未生成，前端构建失败"; exit 1; }
+          cd ..
+          CGO_ENABLED=0 GOWORK=off go build -trimpath \
+            -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${VERSION_VAL:-dev}'" \
+            -o "$GITHUB_WORKSPACE/dist/new-api.exe" .
 
       - name: Install optional free-api deps
         shell: bash
+        continue-on-error: true
         run: |
+          mkdir -p src/free-api
           for d in src/free-api/*/; do
             [ -d "$d" ] || continue
             echo "npm install in $d"
-            (cd "$d" && npm install)
+            (cd "$d" && npm install) || echo "npm install failed in $d (optional)"
           done
 
       - name: Build launcher.exe
@@ -68,13 +91,12 @@ jobs:
         run: |
           mkdir -p dist/data
           # 可选 Node 转换服务（若已克隆）
-          if [ -d src/free-api ] && [ "$(ls -A src/free-api 2>/dev/null)" ]; then
+          if [ -d src/free-api ] && [ -n "$(ls -A src/free-api 2>/dev/null)" ]; then
             mkdir -p dist/free-api
             cp -r src/free-api/* dist/free-api/
           fi
           # Chat2API（主转换层，Electron 桌面应用）：
           # 请在本地 build:win 后把 Chat2API.exe 放入 dist/chat2api/，本 CI 不自动构建 Electron。
-          # 参见 README「本地二次开发流程」。如未放入，launcher 会提示但不阻塞网关启动。
           cp launcher/config.json dist/config.json
           echo "=== dist 内容 ==="
           ls -R dist
