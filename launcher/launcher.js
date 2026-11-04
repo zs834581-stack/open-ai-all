@@ -17,13 +17,19 @@ const fs = require('fs');
 const path = require('path');
 const net = require('net');
 
-const ROOT = __dirname;
+// pkg 打包后 __dirname 指向虚拟快照（C:\snapshot\launcher），
+// 真实可执行文件与同级资源目录在 process.execPath 所在目录。
+const IS_PKG = typeof process.pkg !== 'undefined';
+const APP_DIR = IS_PKG ? path.dirname(process.execPath) : __dirname;
+// 所有相对资源（new-api.exe / chat2api / data / free-api）都以 APP_DIR 为基准
+const ROOT = APP_DIR;
+
 // 优先读取 exe / 脚本同目录的外部 config.json（打包后可直接修改），
 // 不存在时回退到打包内嵌的配置。
-const EXTERNAL_CONFIG = path.join(path.dirname(process.execPath), 'config.json');
+const EXTERNAL_CONFIG = path.join(APP_DIR, 'config.json');
 const CONFIG_PATH = fs.existsSync(EXTERNAL_CONFIG)
   ? EXTERNAL_CONFIG
-  : path.join(ROOT, 'config.json');
+  : path.join(__dirname, 'config.json');
 
 const procs = new Map();
 
@@ -60,7 +66,7 @@ function startNewApi(cfg) {
   if (!fs.existsSync(exe)) {
     console.error(
       `new-api 可执行文件不存在: ${exe}\n` +
-      `请确认 dist 内已包含 new-api.exe（由 CI 构建或手动放入）。`
+      `请确认 new-api.exe 与 launcher.exe 在同一目录（当前基准目录: ${ROOT}）。`
     );
     return null;
   }
@@ -87,7 +93,7 @@ function startChat2Api(cfg) {
   if (!fs.existsSync(exe)) {
     console.error(
       `Chat2API 可执行文件不存在: ${exe}\n` +
-      `请确认 dist/chat2api 已包含 Chat2API.exe（由 Chat2API 源码 build:win 产出并放入）。\n` +
+      `请确认 chat2api\\Chat2API.exe 与 launcher.exe 的相对位置正确（当前基准目录: ${ROOT}）。\n` +
       `也可设 chat2api.enabled=false，手动双击运行 Chat2API。`
     );
     return null;
@@ -194,7 +200,8 @@ function installService() {
   const svc = new Service({
     name: 'ProxyDesktop',
     description: '本地 AI 网关：new-api（聚合/Web 控制台）+ Chat2API 转换层',
-    script: path.join(ROOT, 'launcher.js'),
+    // 打包后没有 launcher.js，服务直接指向 exe 自身
+    script: IS_PKG ? process.execPath : path.join(__dirname, 'launcher.js'),
   });
   svc.on('install', () => { log('service', '已安装，正在启动…'); svc.start(); });
   svc.on('alreadyinstalled', () => log('service', '已经安装过了'));
@@ -207,7 +214,7 @@ function uninstallService() {
   try { nodeWindows = require('node-windows'); }
   catch (e) { console.error('未安装 node-windows，请先: npm install node-windows（服务注册为可选项）'); process.exit(1); }
   const Service = nodeWindows.Service;
-  const svc = new Service({ name: 'ProxyDesktop', script: path.join(ROOT, 'launcher.js') });
+  const svc = new Service({ name: 'ProxyDesktop', script: IS_PKG ? process.execPath : path.join(__dirname, 'launcher.js') });
   svc.on('uninstall', () => log('service', '已卸载'));
   svc.on('error', (e) => log('service', `错误: ${e.message || e}`));
   svc.uninstall();
