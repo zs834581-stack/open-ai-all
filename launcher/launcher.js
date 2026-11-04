@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 /**
  * proxy-desktop launcher
- * 拉起 new-api.exe（网关 + Web 控制台）与 5 个国产 free-api 的 Node 服务，并打开 Web 控制台。
+ * 拉起 new-api.exe（聚合网关 + Web 控制台）与 Chat2API（主转换层：把各厂家网页/客户端转 OpenAI API，自带 Dashboard），
+ * 并打开 Web 控制台。可选拉起清理版 Node 转换服务（如 deepseek/glm free-api）。
  * 用 pkg 打包成单文件 exe；用 node-windows 可注册为 Windows 服务。
+ *
  * 路径约定（打包后的 dist 目录）：
  *   ./new-api.exe
- *   ./free-api/<name>/
+ *   ./chat2api/Chat2API.exe        （由 Chat2API 源码 build:win 产出并放入）
+ *   ./free-api/<name>/             （可选，清理版 Node 转换服务）
  *   ./config.json
  */
 
@@ -63,10 +66,33 @@ function startNewApi(cfg) {
   return child;
 }
 
-function startFreeApi(svc) {
+function startChat2Api(cfg) {
+  const c = cfg.chat2api;
+  if (!c || c.enabled === false) return null;
+  const exe = path.resolve(ROOT, c.exePath);
+  if (!fs.existsSync(exe)) {
+    console.error(
+      `Chat2API 可执行文件不存在: ${exe}\n` +
+      `请确认 dist/chat2api 已包含 Chat2API.exe（由 Chat2API 源码 build:win 产出并放入）。\n` +
+      `也可设 chat2api.enabled=false，手动双击运行 Chat2API。`
+    );
+    return null;
+  }
+  // Chat2API 是带 GUI 的桌面应用，需显示窗口供配置，故不隐藏。
+  const child = spawn(exe, [], {
+    cwd: path.dirname(exe),
+    windowsHide: false,
+  });
+  pipe('chat2api', child.stdout);
+  pipe('chat2api', child.stderr);
+  child.on('exit', (code) => log('chat2api', `进程退出 code=${code}`));
+  return child;
+}
+
+function startNodeService(svc) {
   const dir = path.resolve(ROOT, svc.dir);
   if (!fs.existsSync(dir)) {
-    console.error(`free-api 目录不存在: ${dir}\n请确认 dist/free-api 已包含该服务。`);
+    console.error(`Node 转换服务目录不存在: ${dir}\n请确认 dist/free-api 已包含该服务。`);
     return null;
   }
   const child = spawn(svc.cmd || 'npm start', [], {
@@ -85,11 +111,16 @@ function startAll(cfg) {
   log('launcher', '启动中…');
   const na = startNewApi(cfg);
   if (na) procs.set('new-api', na);
-  for (const svc of cfg.freeApis || []) {
+
+  const ca = startChat2Api(cfg);
+  if (ca) procs.set('chat2api', ca);
+
+  for (const svc of cfg.nodeServices || []) {
     if (svc.enabled === false) continue;
-    const c = startFreeApi(svc);
+    const c = startNodeService(svc);
     if (c) procs.set(svc.name, c);
   }
+
   if (cfg.autoOpenWebUI) {
     setTimeout(() => openWebUI(cfg.newApi.port || 3000, cfg.webUIPath || '/'), 2500);
   }
@@ -129,10 +160,15 @@ async function showStatus(cfg) {
   const port = cfg.newApi.port || 3000;
   const up = await checkPort(port);
   console.log(`new-api  Web 控制台 (${up ? '运行中' : '未运行'}): http://localhost:${port}`);
-  for (const svc of cfg.freeApis || []) {
+  const c = cfg.chat2api;
+  if (c && c.enabled !== false) {
+    const s = await checkPort(c.port || 8080);
+    console.log(`chat2api 转换层+Dashboard (${s ? '监听中' : '未监听'}): 端口 ${c.port || 8080}`);
+  }
+  for (const svc of cfg.nodeServices || []) {
     if (svc.enabled === false) continue;
     const s = await checkPort(svc.port);
-    console.log(`free-api ${svc.name.padEnd(9)} 端口 ${svc.port} (${s ? '监听中' : '未监听'})`);
+    console.log(`node ${svc.name.padEnd(16)} 端口 ${svc.port} (${s ? '监听中' : '未监听'})`);
   }
 }
 
@@ -143,7 +179,7 @@ function installService() {
   const Service = nodeWindows.Service;
   const svc = new Service({
     name: 'ProxyDesktop',
-    description: '本地 AI 网关：new-api + 国产免费模型（Web 控制台 localhost:3000）',
+    description: '本地 AI 网关：new-api（聚合/Web 控制台）+ Chat2API 转换层',
     script: path.join(ROOT, 'launcher.js'),
   });
   svc.on('install', () => { log('service', '已安装，正在启动…'); svc.start(); });

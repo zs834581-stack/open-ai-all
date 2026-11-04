@@ -8,12 +8,15 @@
       "SESSION_SECRET": "change_me_to_random"
     }
   },
-  "freeApis": [
-    { "name": "deepseek", "dir": "./free-api/deepseek-free-api", "port": 8001, "cmd": "npm start", "enabled": true },
-    { "name": "kimi",     "dir": "./free-api/kimi-free-api",     "port": 8002, "cmd": "npm start", "enabled": true },
-    { "name": "qwen",     "dir": "./free-api/qwen-free-api",     "port": 8003, "cmd": "npm start", "enabled": true },
-    { "name": "doubao",   "dir": "./free-api/doubao-free-api",   "port": 8004, "cmd": "npm start", "enabled": true },
-    { "name": "glm",      "dir": "./free-api/glm-free-api",      "port": 8005, "cmd": "npm start", "enabled": true }
+  "chat2api": {
+    "exePath": "./chat2api/Chat2API.exe",
+    "port": 8080,
+    "enabled": true,
+    "autoStart": true
+  },
+  "nodeServices": [
+    { "name": "deepseek-free-api", "dir": "./free-api/deepseek-free-api", "port": 8001, "cmd": "npm start", "enabled": false },
+    { "name": "glm-free-api",     "dir": "./free-api/glm-free-api",     "port": 8002, "cmd": "npm start", "enabled": false }
   ],
   "autoOpenWebUI": true,
   "webUIPath": "/"

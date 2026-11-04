@@ -26,18 +26,20 @@ jobs:
         with:
           node-version: '22'
 
-      # 若 src/ 未提交源码，则在此克隆（保证可独立构建）
+      # 若 src/ 未提交源码，则在此克隆网关与可选清理版转换服务
+      # （原 LLM-Red-Team 组织已下架，此处只用仍在维护且已清理恶意代码的版本）
       - name: Ensure sources
         shell: bash
         run: |
           if [ ! -f src/new-api/go.mod ]; then
             git clone --depth 1 https://github.com/QuantumNous/new-api.git src/new-api
           fi
-          for p in deepseek-free-api kimi-free-api qwen-free-api doubao-free-api glm-free-api; do
-            if [ ! -d "src/free-api/$p" ]; then
-              git clone --depth 1 "https://github.com/LLM-Red-Team/$p.git" "src/free-api/$p"
-            fi
-          done
+          if [ ! -d src/free-api/deepseek-free-api ]; then
+            git clone --depth 1 https://github.com/Fu-Jie/deepseek-free-api.git src/free-api/deepseek-free-api
+          fi
+          if [ ! -d src/free-api/glm-free-api ]; then
+            git clone --depth 1 https://github.com/evanoooo/GLM-Free-API.git src/free-api/glm-free-api
+          fi
 
       - name: Build new-api.exe
         shell: bash
@@ -45,10 +47,11 @@ jobs:
           cd src/new-api
           go build -o "$GITHUB_WORKSPACE/dist/new-api.exe" .
 
-      - name: Install free-api deps
+      - name: Install optional free-api deps
         shell: bash
         run: |
           for d in src/free-api/*/; do
+            [ -d "$d" ] || continue
             echo "npm install in $d"
             (cd "$d" && npm install)
           done
@@ -63,8 +66,15 @@ jobs:
       - name: Assemble dist
         shell: bash
         run: |
-          mkdir -p dist/free-api dist/data
-          cp -r src/free-api/* dist/free-api/
+          mkdir -p dist/data
+          # 可选 Node 转换服务（若已克隆）
+          if [ -d src/free-api ] && [ "$(ls -A src/free-api 2>/dev/null)" ]; then
+            mkdir -p dist/free-api
+            cp -r src/free-api/* dist/free-api/
+          fi
+          # Chat2API（主转换层，Electron 桌面应用）：
+          # 请在本地 build:win 后把 Chat2API.exe 放入 dist/chat2api/，本 CI 不自动构建 Electron。
+          # 参见 README「本地二次开发流程」。如未放入，launcher 会提示但不阻塞网关启动。
           cp launcher/config.json dist/config.json
           echo "=== dist 内容 ==="
           ls -R dist
