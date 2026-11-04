@@ -24,6 +24,7 @@ import { PerplexityStreamHandler } from './adapters/perplexity-stream'
 import { ToolCallingEngine } from './toolCalling/ToolCallingEngine'
 import type { ToolCallingTransformResult } from './toolCalling/types'
 import { sessionManager } from './sessionManager'
+import { conversationRegistry } from './conversationRegistry'
 import {
   createContextManagementService,
   SummaryGenerator,
@@ -422,6 +423,7 @@ export class RequestForwarder {
         temperature: transformedRequest.temperature,
         web_search: transformedRequest.web_search,
         reasoning_effort: transformedRequest.reasoning_effort,
+        conversationKey: request.conversationKey,
       })
 
       const latency = Date.now() - startTime
@@ -536,6 +538,7 @@ export class RequestForwarder {
         web_search: transformedRequest.web_search,
         reasoning_effort: transformedRequest.reasoning_effort,
         deep_research: transformedRequest.deep_research,
+        conversationKey: request.conversationKey,
       })
 
       const latency = Date.now() - startTime
@@ -561,23 +564,25 @@ export class RequestForwarder {
         }
       }
 
-      const handler = new GLMStreamHandler(actualModel, undefined, undefined, transformed.plan)
+      const handler = new GLMStreamHandler(actualModel, undefined, conversationId || undefined, transformed.plan)
       
       if (request.stream) {
         const transformedStream = await handler.handleStream(response.data)
-        
-        // If delete session after chat is enabled, we need to handle it after stream ends
-        if (shouldDeleteSession()) {
-          const originalEnd = transformedStream.end.bind(transformedStream)
-          transformedStream.end = function(chunk?: any, encoding?: any, callback?: any) {
-            const convId = handler.getConversationId()
-            if (convId) {
+
+        // 流结束：记住远端会话；若开启"对话记录清理"则改为删除
+        const originalEnd = transformedStream.end.bind(transformedStream)
+        transformedStream.end = function(chunk?: any, encoding?: any, callback?: any) {
+          const convId = handler.getConversationId()
+          if (convId) {
+            if (shouldDeleteSession()) {
               adapter.deleteConversation(convId).catch(err => {
                 console.error('[GLM] Failed to delete session:', err)
               })
+            } else if (request.conversationKey) {
+              conversationRegistry.setRemoteId('glm', request.conversationKey, convId)
             }
-            return originalEnd(chunk, encoding, callback)
           }
+          return originalEnd(chunk, encoding, callback)
         }
         
         return {
@@ -599,6 +604,11 @@ export class RequestForwarder {
         const convId = handler.getConversationId()
         if (convId) {
           await adapter.deleteConversation(convId)
+        }
+      } else {
+        const convId = handler.getConversationId()
+        if (convId && request.conversationKey) {
+          conversationRegistry.setRemoteId('glm', request.conversationKey, convId)
         }
       }
 
@@ -639,6 +649,7 @@ export class RequestForwarder {
         temperature: request.temperature,
         enableThinking: !!request.reasoning_effort,
         enableWebSearch: !!request.web_search,
+        conversationKey: request.conversationKey,
       })
 
       const latency = Date.now() - startTime
@@ -657,19 +668,26 @@ export class RequestForwarder {
       
       if (request.stream) {
         const transformedStream = await handler.handleStream(response.data)
-        
-        // Add delete conversation callback if needed
-        if (shouldDeleteSession()) {
-          const originalEnd = transformedStream.end.bind(transformedStream)
-          transformedStream.end = function(chunk?: any, encoding?: any, callback?: any) {
-            const realChatId = handler.getConversationId()
-            if (realChatId) {
+
+        // 流结束：记住远端会话（chat_id + 末条消息 id），或按配置删除
+        const originalEnd = transformedStream.end.bind(transformedStream)
+        transformedStream.end = function(chunk?: any, encoding?: any, callback?: any) {
+          const realChatId = handler.getConversationId()
+          if (realChatId) {
+            if (shouldDeleteSession()) {
               adapter.deleteConversation(realChatId).catch(err => {
                 console.error('[Kimi] Failed to delete conversation:', err)
               })
+            } else if (request.conversationKey) {
+              conversationRegistry.setRemoteId(
+                'kimi',
+                request.conversationKey,
+                realChatId,
+                handler.getLastMessageId() || undefined
+              )
             }
-            return originalEnd(chunk, encoding, callback)
           }
+          return originalEnd(chunk, encoding, callback)
         }
         
         return {
@@ -691,6 +709,16 @@ export class RequestForwarder {
         const realChatId = handler.getConversationId()
         if (realChatId) {
           await adapter.deleteConversation(realChatId)
+        }
+      } else if (request.conversationKey) {
+        const realChatId = handler.getConversationId()
+        if (realChatId) {
+          conversationRegistry.setRemoteId(
+            'kimi',
+            request.conversationKey,
+            realChatId,
+            handler.getLastMessageId() || undefined
+          )
         }
       }
 

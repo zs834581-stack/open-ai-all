@@ -40,15 +40,18 @@ export function createKimiChatPayload(options: {
   content: string
   enableWebSearch: boolean
   enableThinking: boolean
+  /** 复用已有会话时传入，空表示新建 */
+  chatId?: string
+  parentId?: string
 }) {
   const scenario = resolveKimiScenario(options.model)
 
   return {
     scenario,
-    chat_id: '',
+    chat_id: options.chatId || '',
     tools: options.enableWebSearch ? [{ type: 'TOOL_TYPE_SEARCH', search: {} }] : [],
     message: {
-      parent_id: '',
+      parent_id: options.parentId || '',
       role: 'user',
       blocks: [{
         message_id: '',

@@ -76,6 +76,11 @@ export interface ChatCompletionRequest {
   frequency_penalty?: number
   logit_bias?: Record<string, number>
   user?: string
+  /**
+   * 上层会话标识，由 chat 路由解析后注入。
+   * 同一会话内固定 provider/账号，并复用同一个远端会话。
+   */
+  conversationKey?: string
   /** Enable web search (OpenAI compatible) */
   web_search?: boolean
   /** Web search options (OpenAI compatible) */

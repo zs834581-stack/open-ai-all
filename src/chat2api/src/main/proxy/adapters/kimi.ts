@@ -13,6 +13,7 @@ import { createKimiChatPayload, encodeKimiGrpcFrame } from './providerModelOptio
 import { getProviderToolProfile } from '../toolCalling/providerProfiles'
 import { ToolStreamParser } from '../toolCalling/ToolStreamParser'
 import type { ToolCallingPlan } from '../toolCalling/types'
+import { conversationRegistry } from '../conversationRegistry'
 
 const KIMI_API_BASE = 'https://www.kimi.com'
 
@@ -58,6 +59,7 @@ interface ChatCompletionRequest {
   tool_choice?: any
   conversationId?: string
   parentId?: string
+  conversationKey?: string
 }
 
 const accessTokenMap = new Map<string, TokenInfo>()
@@ -324,11 +326,22 @@ export class KimiAdapter {
       console.log('[Kimi] Web search enabled (from model name)')
     }
 
+    // 同一会话复用已有 chat_id / parent_id，避免每轮新建对话
+    const resumeChatId = request.conversationId
+      || (request.conversationKey ? conversationRegistry.getRemoteId('kimi', request.conversationKey) : undefined)
+    const resumeParentId = request.parentId
+      || (request.conversationKey ? conversationRegistry.getParentId('kimi', request.conversationKey) : undefined)
+    if (resumeChatId) {
+      console.log('[Kimi] Reusing chat:', resumeChatId, 'parent:', resumeParentId || '(none)')
+    }
+
     const payload = createKimiChatPayload({
       model: request.model,
       content,
       enableWebSearch,
       enableThinking,
+      chatId: resumeChatId,
+      parentId: resumeParentId,
     })
     const frameBuffer = encodeKimiGrpcFrame(payload)
 
@@ -360,7 +373,12 @@ export class KimiAdapter {
       throw new Error(`Completion request failed: HTTP ${response.status}`)
     }
 
-    return { response, conversationId: '' }
+    // 复用会话失效时清掉绑定，下一轮自动新建
+    if (response.status >= 400 && request.conversationKey) {
+      conversationRegistry.clearRemote('kimi', request.conversationKey)
+    }
+
+    return { response, conversationId: resumeChatId || '' }
   }
 
   async deleteConversation(conversationId: string): Promise<boolean> {

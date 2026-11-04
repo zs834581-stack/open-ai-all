@@ -12,6 +12,7 @@ import { requestForwarder } from '../forwarder'
 import { streamHandler } from '../stream'
 import { proxyStatusManager } from '../status'
 import { modelMapper } from '../modelMapper'
+import { conversationRegistry } from '../conversationRegistry'
 import { storeManager } from '../../store/store'
 import { 
   isAnthropicToolFormat,
@@ -140,8 +141,17 @@ router.post('/completions', async (ctx: Context) => {
   }
 
   const config = storeManager.getConfig()
-  const preferredProviderId = modelMapper.getPreferredProvider(request.model)
-  const preferredAccountId = modelMapper.getPreferredAccount(request.model)
+
+  // 会话对齐：解析上层会话键，同一会话固定 provider/账号
+  request.conversationKey = conversationRegistry.resolveKey({
+    headers: ctx.headers as unknown as Record<string, any>,
+    body: request as any,
+    apiKey: (ctx.headers['authorization'] as string) || '',
+  })
+  const conversationBinding = conversationRegistry.getBinding(request.conversationKey)
+
+  const preferredProviderId = conversationBinding?.providerId || modelMapper.getPreferredProvider(request.model)
+  const preferredAccountId = conversationBinding?.accountId || modelMapper.getPreferredAccount(request.model)
 
   const selection = loadBalancer.selectAccount(
     request.model,
@@ -164,6 +174,11 @@ router.post('/completions', async (ctx: Context) => {
   }
 
   const { account, provider, actualModel } = selection
+
+  // 记录本次会话落到的 provider/账号，后续同一会话复用
+  if (request.conversationKey) {
+    conversationRegistry.bind(request.conversationKey, provider.id, account.id)
+  }
 
   const context: ProxyContext = {
     requestId,

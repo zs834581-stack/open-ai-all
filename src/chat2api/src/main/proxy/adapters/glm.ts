@@ -18,6 +18,7 @@ import {
   createBaseChunk,
 } from '../utils/streamToolHandler'
 import { getProviderToolProfile } from '../toolCalling/providerProfiles'
+import { conversationRegistry } from '../conversationRegistry'
 import { ToolStreamParser } from '../toolCalling/ToolStreamParser'
 import type { ToolCallingPlan } from '../toolCalling/types'
 
@@ -76,6 +77,7 @@ interface ChatCompletionRequest {
   deep_research?: boolean
   tools?: any[]
   tool_choice?: any
+  conversationKey?: string
 }
 
 const tokenCache = new Map<string, TokenInfo>()
@@ -527,12 +529,20 @@ GLM STRICT RULES:
     }
 
     console.log('[GLM] Sending chat request...')
-    
+
+    // 同一会话复用远端 conversation_id，避免每轮新建对话
+    const resumeConversationId = request.conversationKey
+      ? conversationRegistry.getRemoteId('glm', request.conversationKey)
+      : undefined
+    if (resumeConversationId) {
+      console.log('[GLM] Reusing conversation:', resumeConversationId)
+    }
+
     const response = await axios.post(
       `${GLM_API_BASE}/backend-api/assistant/stream`,
       {
         assistant_id: assistantId,
-        conversation_id: '',
+        conversation_id: resumeConversationId || '',
         project_id: '',
         chat_type: 'user_chat',
         messages: preparedMessages,
@@ -567,7 +577,12 @@ GLM STRICT RULES:
       }
     )
 
-    return { response, conversationId: '' }
+    // 复用会话失效时清掉绑定，下一轮自动新建
+    if (response.status >= 400 && request.conversationKey) {
+      conversationRegistry.clearRemote('glm', request.conversationKey)
+    }
+
+    return { response, conversationId: resumeConversationId || '' }
   }
 
   async deleteConversation(conversationId: string): Promise<boolean> {

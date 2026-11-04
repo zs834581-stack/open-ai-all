@@ -11,6 +11,7 @@ import { getDeepSeekHash } from '../../lib/challenge'
 import type { Account, Provider } from '../../store/types'
 import { resolveDeepSeekChatOptions } from './providerModelOptions'
 import { getProviderToolProfile } from '../toolCalling/providerProfiles'
+import { conversationRegistry } from '../conversationRegistry'
 
 const DEEPSEEK_API_BASE = 'https://chat.deepseek.com/api'
 
@@ -65,10 +66,10 @@ interface ChatCompletionRequest {
   reasoning_effort?: 'low' | 'medium' | 'high'
   tools?: any[]
   tool_choice?: any
+  conversationKey?: string
 }
 
 const tokenCache = new Map<string, TokenInfo>()
-const sessionCache = new Map<string, { sessionId: string; createdAt: number }>()
 
 function generateRandomString(length: number, charset: string = 'alphanumeric'): string {
   const sets = {
@@ -106,6 +107,7 @@ export class DeepSeekAdapter {
   private provider: Provider
   private account: Account
   private token: string
+  private sessionKey: string = ''
 
   constructor(provider: Provider, account: Account) {
     this.provider = provider
@@ -165,11 +167,15 @@ export class DeepSeekAdapter {
     return accessToken
   }
 
-  private async createSession(): Promise<string> {
-    const cacheKey = this.account.id
-    const cached = sessionCache.get(cacheKey)
-    if (cached && Date.now() - cached.createdAt < 300000) {
-      return cached.sessionId
+  private async createSession(conversationKey?: string): Promise<string> {
+    // 会话键缺省时退回按账号维度（旧行为），避免无会话标识的请求每轮新建
+    const cacheKey = conversationKey || `account:${this.account.id}`
+    this.sessionKey = cacheKey
+
+    const cached = conversationRegistry.getRemoteId('deepseek', cacheKey)
+    if (cached) {
+      console.log('[DeepSeek] Reusing session for conversation:', cached)
+      return cached
     }
 
     const token = await this.acquireToken()
@@ -196,7 +202,7 @@ export class DeepSeekAdapter {
     }
 
     const sessionId = bizData?.chat_session?.id
-    sessionCache.set(cacheKey, { sessionId, createdAt: Date.now() })
+    conversationRegistry.setRemoteId('deepseek', cacheKey, sessionId)
 
     return sessionId
   }
@@ -221,9 +227,8 @@ export class DeepSeekAdapter {
 
       const success = result.status === 200 && result.data?.code === 0
       if (success) {
-        // Clear cache
-        const cacheKey = this.account.id
-        sessionCache.delete(cacheKey)
+        // 清掉会话绑定，避免下轮复用一个已删除的会话
+        conversationRegistry.clearRemote('deepseek', this.sessionKey || `account:${this.account.id}`)
         console.log('[DeepSeek] Session deleted:', sessionId)
       }
       return success
@@ -374,7 +379,7 @@ export class DeepSeekAdapter {
   async chatCompletion(request: ChatCompletionRequest): Promise<{ response: AxiosResponse; sessionId: string }> {
     const token = await this.acquireToken()
     
-    const sessionId = await this.createSession()
+    const sessionId = await this.createSession(request.conversationKey)
     console.log('[DeepSeek] Created new session:', sessionId)
     
     const challenge = await this.getChallenge('/api/v0/chat/completion')
@@ -422,6 +427,11 @@ export class DeepSeekAdapter {
       }
     )
 
+    // 复用会话失效（被删/过期）时清掉绑定，下一轮自动新建
+    if (response.status >= 400 && request.conversationKey) {
+      conversationRegistry.clearRemote('deepseek', request.conversationKey)
+    }
+
     return { response, sessionId }
   }
 
@@ -445,7 +455,7 @@ export class DeepSeekAdapter {
 
       const success = result.status === 200 && result.data?.code === 0
       if (success) {
-        sessionCache.clear()
+        conversationRegistry.clearProvider('deepseek')
         console.log('[DeepSeek] All chats deleted')
       }
       return success
@@ -464,7 +474,7 @@ export class DeepSeekAdapter {
    * This should be called when a session is deleted externally (e.g., from web)
    */
   static clearSessionCache(accountId: string): void {
-    sessionCache.delete(accountId)
+    conversationRegistry.clearRemote('deepseek', `account:${accountId}`)
     console.log('[DeepSeek] Cleared session cache for account:', accountId)
   }
 }
