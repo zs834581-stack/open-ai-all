@@ -47,6 +47,11 @@ const MIN_MSG_LEN_FOR_MATCH = 24
  * agent 一轮内的多次工具调用必然落在此窗口内，避免每次调用都新建网页会话。
  */
 const IDLE_CONTINUE_MS = 45 * 1000
+/**
+ * 历史增长续接：请求携带的消息数比该会话上次更多，说明是同一会话在推进
+ * （即使中间内容被客户端裁剪、链匹配失效，也据此续接）
+ */
+const GROW_CONTINUE_MS = 30 * 60 * 1000
 
 const HEADER_KEYS = ['x-conversation-id', 'x-session-id', 'x-chat-id']
 const BODY_KEYS = ['conversation_id', 'conversationId', 'session_id', 'sessionId', 'chat_id', 'chatId']
@@ -136,11 +141,14 @@ class ConversationRegistryClass {
     // 3) 空窗续接：客户端未重发历史时，按「同 apiKey+model 且刚活跃过」续接
     const recent = this.recentByScope.get(scope)
     // 只续接“同为单轮无历史”的客户端，避免把用户手动开的新话题并进旧会话
-    const sameShape = recent && (recent.msgCount <= 1) === (texts.length <= 1)
-    if (recent && sameShape && Date.now() - recent.at < IDLE_CONTINUE_MS && this.getBinding(recent.key)) {
-      this.remember(recent.key, body.messages)
-      debugLog({ source: 'idle', key: recent.key, idleMs: Date.now() - recent.at, msgCount: texts.length })
-      return this.finalize(scope, recent.key, texts.length)
+    const recentBinding = recent ? this.getBinding(recent.key) : undefined
+    const idleAt = recent ? Date.now() - recent.at : Number.MAX_SAFE_INTEGER
+    const grew = Boolean(recent && recentBinding && texts.length > recent.msgCount && idleAt < GROW_CONTINUE_MS)
+    const sameSingle = Boolean(recent && recentBinding && recent.msgCount <= 1 && texts.length <= 1 && idleAt < IDLE_CONTINUE_MS)
+    if (recent && (grew || sameSingle)) {
+      this.remember(recent!.key, body.messages)
+      debugLog({ source: grew ? 'grow' : 'idle', key: recent!.key, idleMs: idleAt, msgCount: texts.length })
+      return this.finalize(scope, recent!.key, texts.length)
     }
 
     // 4) 新会话：用整条链的末节点作为稳定键
