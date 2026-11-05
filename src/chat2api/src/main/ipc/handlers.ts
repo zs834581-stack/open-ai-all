@@ -75,8 +75,10 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
   }
 
   // Check if auto-start proxy is needed
+  // CHAT2API_AUTOSTART_PROXY=1 lets headless / CI runs start the proxy without touching the UI
   const config = storeManager.getConfig()
-  if (config.autoStartProxy) {
+  const forceAutoStartProxy = process.env.CHAT2API_AUTOSTART_PROXY === '1'
+  if (config.autoStartProxy || forceAutoStartProxy) {
     console.log('[App] Auto-starting proxy service...')
     const proxyPort = config.proxyPort
     const proxyHost = config.proxyHost || '127.0.0.1'

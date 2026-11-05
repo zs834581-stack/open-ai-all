@@ -6,6 +6,14 @@ dist/
 *.exe
 .env
 
+# 本地构建/临时产物
+/src/chat2api/.tmp/
+/src/chat2api/out.bak.*
+/src/chat2api/out/
+
+# 文档流水线中间产物（生成的 docs/*.docx 仍需提交）
+/output/
+
 # 操作系统
 Thumbs.db
 Desktop.ini

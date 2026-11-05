@@ -15,6 +15,9 @@ import { conversationRegistry } from '../conversationRegistry'
 
 const DEEPSEEK_API_BASE = 'https://chat.deepseek.com/api'
 
+/** 会话创建去重：同一账号 + 同一会话键的并发请求共用一次创建 */
+const createSessionInflight = new Map<string, Promise<string>>()
+
 const FAKE_HEADERS = {
   Accept: '*/*',
   'Accept-Encoding': 'gzip, deflate, br, zstd',
@@ -178,6 +181,22 @@ export class DeepSeekAdapter {
       return cached
     }
 
+    // 并发去重：agent 一轮内可能同时发多个请求，未命中缓存时会各建一份网页会话
+    const inflightKey = `${this.account.id}|${cacheKey}`
+    const inflight = createSessionInflight.get(inflightKey)
+    if (inflight) {
+      console.log('[DeepSeek] Awaiting in-flight session creation for conversation:', cacheKey)
+      return inflight
+    }
+
+    const task = this.createSessionRemote(cacheKey).finally(() => {
+      createSessionInflight.delete(inflightKey)
+    })
+    createSessionInflight.set(inflightKey, task)
+    return task
+  }
+
+  private async createSessionRemote(cacheKey: string): Promise<string> {
     const token = await this.acquireToken()
     const result = await axios.post(
       `${DEEPSEEK_API_BASE}/v0/chat_session/create`,
@@ -427,8 +446,8 @@ export class DeepSeekAdapter {
       }
     )
 
-    // 复用会话失效（被删/过期）时清掉绑定，下一轮自动新建
-    if (response.status >= 400 && request.conversationKey) {
+    // 仅鉴权失败/会话不存在时清绑定；429 限流、400 参数错误不应丢弃已建立的会话
+    if (request.conversationKey && [401, 403, 404].includes(response.status)) {
       conversationRegistry.clearRemote('deepseek', request.conversationKey)
     }
 

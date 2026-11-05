@@ -374,7 +374,7 @@ export class KimiAdapter {
     }
 
     // 复用会话失效时清掉绑定，下一轮自动新建
-    if (response.status >= 400 && request.conversationKey) {
+    if (request.conversationKey && [401, 403, 404].includes(response.status)) {
       conversationRegistry.clearRemote('kimi', request.conversationKey)
     }
 

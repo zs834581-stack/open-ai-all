@@ -9,9 +9,14 @@
  *   1. 请求头 X-Conversation-Id / X-Session-Id / X-Chat-Id（客户端能发就用，最准）
  *   2. 请求体 conversation_id / session_id / chat_id
  *   3. OpenAI 标准字段 user
- *   4. 指纹兜底：apiKey + system prompt + 首条 user 消息（agent 会话内这三样稳定，新会话必变）
+ *   4. 历史链匹配兜底：把 messages 逐条累积哈希成链条，凡与已登记会话的链条前缀相交即视为同一会话
+ *      （agent 每轮都会重发完整历史，历史前缀在会话内稳定；system 常含动态内容，故不参与）
+ *   5. 单条消息哈希兜底：客户端裁剪过历史时，用最近一条稳定消息内容定位会话
  */
 
+import { appendFileSync, mkdirSync } from 'fs'
+import { join } from 'path'
+import { homedir } from 'os'
 import { createHash } from 'crypto'
 
 export interface ConversationBinding {
@@ -30,39 +35,168 @@ export interface ResolveKeyInput {
 
 const TTL_MS = 12 * 60 * 60 * 1000
 const MAX_ENTRIES = 500
+/** 单个会话最多登记的链节点 */
+const MAX_SIGS_PER_CONVERSATION = 600
+/** 全局索引上限，超出按插入顺序淘汰 */
+const MAX_SIG_INDEX = 40000
+/** 单条消息匹配要求的最小内容长度，太短容易误配 */
+const MIN_MSG_LEN_FOR_MATCH = 24
+/**
+ * 空窗续接：客户端若每轮都不重发历史（无任何可匹配特征），
+ * 在同一 apiKey + model 上距上次活跃小于该窗口时视为续接同一会话。
+ * agent 一轮内的多次工具调用必然落在此窗口内，避免每次调用都新建网页会话。
+ */
+const IDLE_CONTINUE_MS = 45 * 1000
+
 const HEADER_KEYS = ['x-conversation-id', 'x-session-id', 'x-chat-id']
 const BODY_KEYS = ['conversation_id', 'conversationId', 'session_id', 'sessionId', 'chat_id', 'chatId']
 
+function debugLog(payload: Record<string, any>): void {
+  if (process.env.CHAT2API_DEBUG_SESSION !== '1') return
+  try {
+    const dir = join(homedir(), '.chat2api')
+    mkdirSync(dir, { recursive: true })
+    appendFileSync(join(dir, 'session-debug.ndjson'), JSON.stringify({ ts: Date.now(), ...payload }) + '\n', 'utf8')
+  } catch {
+    /* 调试日志失败不影响主流程 */
+  }
+}
+
 class ConversationRegistryClass {
   private bindings = new Map<string, ConversationBinding>()
+  /** 累积链节点 -> 会话键 */
+  private chainIndex = new Map<string, string>()
+  /** 单条消息哈希 -> 会话键 */
+  private msgIndex = new Map<string, string>()
+  /** apiKey|model -> 最近活跃会话，用于客户端不重发历史时的续接 */
+  private recentByScope = new Map<string, { key: string; at: number; msgCount: number }>()
 
   resolveKey(input: ResolveKeyInput): string {
     const headers = input.headers || {}
+    const body = input.body || {}
+    const texts = collectTexts(body.messages)
+    const scope = `${input.apiKey || ''}|${body.model || ''}`
     for (const name of HEADER_KEYS) {
       const value = headers[name]
       if (typeof value === 'string' && value.trim().length > 0) {
-        return `h:${value.trim()}`
+        const key = `h:${value.trim()}`
+        debugLog({ source: 'header', header: name, key })
+        return this.finalize(scope, key, texts.length)
       }
     }
 
-    const body = input.body || {}
     for (const field of BODY_KEYS) {
       const value = body[field]
       if (typeof value === 'string' && value.trim().length > 0) {
-        return `b:${value.trim()}`
+        const key = `b:${value.trim()}`
+        debugLog({ source: 'body', field, key })
+        return this.finalize(scope, key, texts.length)
       }
     }
 
     if (typeof body.user === 'string' && body.user.trim().length > 0) {
-      return `u:${body.user.trim()}`
+      const key = `u:${body.user.trim()}`
+      this.remember(key, body.messages)
+      debugLog({ source: 'user-field', key })
+      return this.finalize(scope, key, texts.length)
     }
 
-    const fingerprint = buildFingerprint(body.messages)
-    if (!fingerprint) {
+    const chains = buildChain(texts)
+    const msgHashes = texts.map(hashMessage)
+
+    // 1) 历史链匹配：从最新往前找，命中即同一会话
+    for (let i = chains.length - 1; i >= 0; i--) {
+      const hit = this.chainIndex.get(chains[i])
+      if (hit) {
+        const binding = this.getBinding(hit)
+        if (binding) {
+          this.remember(hit, body.messages)
+          debugLog({ source: 'chain', key: hit, matchedAt: i, chainLen: chains.length, msgCount: texts.length })
+          return this.finalize(scope, hit, texts.length)
+        }
+        this.chainIndex.delete(chains[i])
+      }
+    }
+
+    // 2) 单条消息匹配：客户端裁剪历史后仍可定位
+    for (let i = msgHashes.length - 1; i >= 0; i--) {
+      if (texts[i].length < MIN_MSG_LEN_FOR_MATCH) continue
+      const hit = this.msgIndex.get(msgHashes[i])
+      if (hit) {
+        const binding = this.getBinding(hit)
+        if (binding) {
+          this.remember(hit, body.messages)
+          debugLog({ source: 'message', key: hit, matchedAt: i, msgCount: texts.length })
+          return this.finalize(scope, hit, texts.length)
+        }
+        this.msgIndex.delete(msgHashes[i])
+      }
+    }
+
+    // 3) 空窗续接：客户端未重发历史时，按「同 apiKey+model 且刚活跃过」续接
+    const recent = this.recentByScope.get(scope)
+    // 只续接“同为单轮无历史”的客户端，避免把用户手动开的新话题并进旧会话
+    const sameShape = recent && (recent.msgCount <= 1) === (texts.length <= 1)
+    if (recent && sameShape && Date.now() - recent.at < IDLE_CONTINUE_MS && this.getBinding(recent.key)) {
+      this.remember(recent.key, body.messages)
+      debugLog({ source: 'idle', key: recent.key, idleMs: Date.now() - recent.at, msgCount: texts.length })
+      return this.finalize(scope, recent.key, texts.length)
+    }
+
+    // 4) 新会话：用整条链的末节点作为稳定键
+    if (chains.length === 0) {
+      debugLog({ source: 'none', msgCount: texts.length })
       return ''
     }
-    const seed = `${input.apiKey || ''}|${fingerprint}`
-    return `f:${createHash('sha256').update(seed).digest('hex').slice(0, 24)}`
+    const key = `f:${chains[chains.length - 1].slice(0, 24)}`
+    this.remember(key, body.messages)
+    debugLog({
+      source: 'new',
+      key,
+      msgCount: texts.length,
+      roles: (body.messages || []).map((m: any) => m && m.role).join(','),
+      firstText: texts[0] ? texts[0].slice(0, 60) : '',
+    })
+    return this.finalize(scope, key, texts.length)
+  }
+
+  private finalize(scope: string, key: string, msgCount = 0): string {
+    if (key) {
+      this.recentByScope.set(scope, { key, at: Date.now(), msgCount })
+    }
+    return key
+  }
+
+  /** 把请求携带的历史登记到索引，供后续轮次命中 */
+  private remember(key: string, messages: any): void {
+    if (!key) return
+    const texts = collectTexts(messages)
+    if (texts.length === 0) return
+
+    const chains = buildChain(texts)
+    const startChain = Math.max(0, chains.length - MAX_SIGS_PER_CONVERSATION)
+    for (let i = startChain; i < chains.length; i++) {
+      this.chainIndex.set(chains[i], key)
+    }
+    const startMsg = Math.max(0, texts.length - MAX_SIGS_PER_CONVERSATION)
+    for (let i = startMsg; i < texts.length; i++) {
+      if (texts[i].length < MIN_MSG_LEN_FOR_MATCH) continue
+      this.msgIndex.set(hashMessage(texts[i]), key)
+    }
+    this.trimIndex()
+  }
+
+  private trimIndex(): void {
+    while (this.chainIndex.size > MAX_SIG_INDEX) {
+      const first = this.chainIndex.keys().next()
+      if (first.done) break
+      this.chainIndex.delete(first.value)
+    }
+    while (this.msgIndex.size > MAX_SIG_INDEX) {
+      const first = this.msgIndex.keys().next()
+      if (first.done) break
+      this.msgIndex.delete(first.value)
+    }
   }
 
   getBinding(key?: string): ConversationBinding | undefined {
@@ -106,6 +240,7 @@ class ConversationRegistryClass {
       binding.parent[providerId] = parentId
     }
     binding.lastActiveAt = Date.now()
+    debugLog({ source: 'setRemote', key, providerId, remoteId, parentId })
   }
 
   clearRemote(providerId: string, key?: string): void {
@@ -161,28 +296,41 @@ function extractText(content: any): string {
   return ''
 }
 
-function buildFingerprint(messages: any): string {
-  if (!Array.isArray(messages) || messages.length === 0) return ''
-
-  let system = ''
-  let firstUser = ''
+/** 收集参与会话识别的文本：跳过 system（常含时间/环境等动态内容） */
+function collectTexts(messages: any): string[] {
+  if (!Array.isArray(messages)) return []
+  const out: string[] = []
   for (const message of messages) {
     if (!message || typeof message !== 'object') continue
-    if (!system && message.role === 'system') {
-      system = extractText(message.content)
-      continue
-    }
-    if (!firstUser && message.role === 'user') {
-      firstUser = extractText(message.content)
-    }
-    if (system && firstUser) break
+    if (message.role === 'system' || message.role === 'developer') continue
+    const text = normalize(extractText(message.content))
+    if (!text) continue
+    out.push(`${message.role}:${text}`)
   }
+  return out
+}
 
-  if (!system && !firstUser) return ''
-  // system 只取前缀：部分 agent 会在末尾追加动态上下文，取全量会导致同一会话内指纹漂移
-  const systemPart = createHash('sha256').update(system.slice(0, 500)).digest('hex').slice(0, 16)
-  const userPart = createHash('sha256').update(firstUser.slice(0, 2000)).digest('hex').slice(0, 16)
-  return `${systemPart}:${userPart}`
+/** 归一化：超长内容取首尾采样，避免大段工具输出拖慢哈希 */
+function normalize(text: string): string {
+  const trimmed = text.trim()
+  if (!trimmed) return ''
+  if (trimmed.length <= 8000) return trimmed
+  return `${trimmed.length}|${trimmed.slice(0, 6000)}|${trimmed.slice(-1500)}`
+}
+
+function hashMessage(text: string): string {
+  return createHash('sha256').update(text).digest('hex').slice(0, 32)
+}
+
+/** 逐条累积哈希，得到“对话前缀链”：同一会话第 N 轮请求的前 N-1 个节点必然与历史一致 */
+function buildChain(texts: string[]): string[] {
+  const out: string[] = []
+  let acc = ''
+  for (const text of texts) {
+    acc = createHash('sha256').update(acc).update('\u0000').update(text).digest('hex')
+    out.push(acc)
+  }
+  return out
 }
 
 export const conversationRegistry = new ConversationRegistryClass()
