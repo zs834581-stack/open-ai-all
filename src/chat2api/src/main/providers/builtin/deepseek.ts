@@ -27,11 +27,18 @@ export const deepseekConfig: BuiltinProviderConfig = {
     'X-Client-Version': '2.0.0',
   },
   enabled: true,
-  description: 'DeepSeek AI assistant, supports deep thinking and web search',
-  supportedModels: ['deepseek-v4-flash', 'deepseek-v4-pro'],
+  description: 'DeepSeek AI assistant, supports V4 / V4.1 flash & pro, deep thinking and web search',
+  supportedModels: [
+    'deepseek-v4-flash',
+    'deepseek-v4-pro',
+    'deepseek-v4.1-flash',
+    'deepseek-v4.1-pro',
+  ],
   modelMappings: {
     'deepseek-v4-flash': 'deepseek-v4-flash',
     'deepseek-v4-pro': 'deepseek-v4-pro',
+    'deepseek-v4.1-flash': 'deepseek-v4.1-flash',
+    'deepseek-v4.1-pro': 'deepseek-v4.1-pro',
   },
   credentialFields: [
     {

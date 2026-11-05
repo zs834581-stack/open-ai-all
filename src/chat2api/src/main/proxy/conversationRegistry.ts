@@ -42,16 +42,14 @@ const MAX_SIG_INDEX = 40000
 /** 单条消息匹配要求的最小内容长度，太短容易误配 */
 const MIN_MSG_LEN_FOR_MATCH = 24
 /**
- * 空窗续接：客户端若每轮都不重发历史（无任何可匹配特征），
- * 在同一 apiKey + model 上距上次活跃小于该窗口时视为续接同一会话。
- * agent 一轮内的多次工具调用必然落在此窗口内，避免每次调用都新建网页会话。
+ * 严格模式不变量：同一 apiKey + model 存在活跃会话时，一律复用，
+ * 只有「明确的新会话首轮」才允许新建。新会话首轮需同时满足：
+ *   1. 请求只有一条非 system 消息
+ *   2. 该消息不是已登记会话里的重试
+ *   3. 距上次活跃超过 NEW_SESSION_IDLE_MS
+ * 这样 agent 一个对话内（连续轮必然携带历史）永远不会新建第二个网页会话。
  */
-const IDLE_CONTINUE_MS = 45 * 1000
-/**
- * 历史增长续接：请求携带的消息数比该会话上次更多，说明是同一会话在推进
- * （即使中间内容被客户端裁剪、链匹配失效，也据此续接）
- */
-const GROW_CONTINUE_MS = 30 * 60 * 1000
+const NEW_SESSION_IDLE_MS = 10 * 60 * 1000
 
 const HEADER_KEYS = ['x-conversation-id', 'x-session-id', 'x-chat-id']
 const BODY_KEYS = ['conversation_id', 'conversationId', 'session_id', 'sessionId', 'chat_id', 'chatId']
@@ -90,20 +88,18 @@ class ConversationRegistryClass {
       }
     }
 
+    // body 里的会话字段只作为「无活跃会话时」的命名依据：
+    // 部分客户端每轮都生成新的 user / conversation_id，直接当会话键会导致每轮新建
+    let bodyKey = ''
     for (const field of BODY_KEYS) {
       const value = body[field]
       if (typeof value === 'string' && value.trim().length > 0) {
-        const key = `b:${value.trim()}`
-        debugLog({ source: 'body', field, key })
-        return this.finalize(scope, key, texts.length)
+        bodyKey = `b:${value.trim()}`
+        break
       }
     }
-
-    if (typeof body.user === 'string' && body.user.trim().length > 0) {
-      const key = `u:${body.user.trim()}`
-      this.remember(key, body.messages)
-      debugLog({ source: 'user-field', key })
-      return this.finalize(scope, key, texts.length)
+    if (!bodyKey && typeof body.user === 'string' && body.user.trim().length > 0) {
+      bodyKey = `u:${body.user.trim()}`
     }
 
     const chains = buildChain(texts)
@@ -138,25 +134,27 @@ class ConversationRegistryClass {
       }
     }
 
-    // 3) 空窗续接：客户端未重发历史时，按「同 apiKey+model 且刚活跃过」续接
+    // 3) 严格续接：scope 内有活跃会话，除「明确的新会话首轮」外一律复用
     const recent = this.recentByScope.get(scope)
-    // 只续接“同为单轮无历史”的客户端，避免把用户手动开的新话题并进旧会话
     const recentBinding = recent ? this.getBinding(recent.key) : undefined
-    const idleAt = recent ? Date.now() - recent.at : Number.MAX_SAFE_INTEGER
-    const grew = Boolean(recent && recentBinding && texts.length > recent.msgCount && idleAt < GROW_CONTINUE_MS)
-    const sameSingle = Boolean(recent && recentBinding && recent.msgCount <= 1 && texts.length <= 1 && idleAt < IDLE_CONTINUE_MS)
-    if (recent && (grew || sameSingle)) {
-      this.remember(recent!.key, body.messages)
-      debugLog({ source: grew ? 'grow' : 'idle', key: recent!.key, idleMs: idleAt, msgCount: texts.length })
-      return this.finalize(scope, recent!.key, texts.length)
+    if (recent && recentBinding) {
+      const idleMs = Date.now() - recent.at
+      const firstHash = msgHashes[0]
+      const isRetry = firstHash ? this.msgIndex.has(firstHash) : false
+      const freshFirstTurn = texts.length <= 1 && !isRetry && idleMs > NEW_SESSION_IDLE_MS
+      if (!freshFirstTurn) {
+        this.remember(recent.key, body.messages)
+        debugLog({ source: 'reuse', key: recent.key, idleMs, msgCount: texts.length })
+        return this.finalize(scope, recent.key, texts.length)
+      }
     }
 
-    // 4) 新会话：用整条链的末节点作为稳定键
+    // 4) 新会话：仅在没有活跃会话，或明确判定为新会话首轮时到达
     if (chains.length === 0) {
       debugLog({ source: 'none', msgCount: texts.length })
       return ''
     }
-    const key = `f:${chains[chains.length - 1].slice(0, 24)}`
+    const key = bodyKey || `f:${chains[chains.length - 1].slice(0, 24)}`
     this.remember(key, body.messages)
     debugLog({
       source: 'new',
@@ -170,6 +168,8 @@ class ConversationRegistryClass {
 
   private finalize(scope: string, key: string, msgCount = 0): string {
     if (key) {
+      // 立刻建立绑定，续接判断不再依赖外部是否先调用过 bind()
+      this.ensure(key)
       this.recentByScope.set(scope, { key, at: Date.now(), msgCount })
     }
     return key

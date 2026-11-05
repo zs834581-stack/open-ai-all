@@ -308,17 +308,23 @@ class StoreManager {
             }
           }
 
-          const hasUserOverrides = userModelOverrides[p.id] &&
-            ((userModelOverrides[p.id].addedModels && userModelOverrides[p.id].addedModels.length > 0) ||
-             (userModelOverrides[p.id].excludedModels && userModelOverrides[p.id].excludedModels.length > 0))
-          const shouldUseBuiltinModels = p.id === 'deepseek' || !hasUserOverrides
-          
+          // 内置新增模型必须并进已有配置，否则用户旧数据会一直看不到新模型
+          const excludedModels = new Set(userModelOverrides[p.id]?.excludedModels || [])
+          const mergedModels = Array.from(new Set([
+            ...(p.supportedModels || []),
+            ...(builtinConfig.supportedModels || []).filter(m => !excludedModels.has(m)),
+          ]))
+          const mergedMappings = {
+            ...(builtinConfig.modelMappings || {}),
+            ...(p.modelMappings || {}),
+          }
+
           return { 
             ...p, 
             apiEndpoint: builtinConfig.apiEndpoint,
             chatPath: builtinConfig.chatPath,
-            supportedModels: shouldUseBuiltinModels ? builtinConfig.supportedModels : p.supportedModels,
-            modelMappings: shouldUseBuiltinModels ? builtinConfig.modelMappings : p.modelMappings,
+            supportedModels: mergedModels,
+            modelMappings: mergedMappings,
             headers: builtinConfig.headers,
             description: builtinConfig.description,
           }

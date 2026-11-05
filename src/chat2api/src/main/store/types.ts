@@ -602,7 +602,12 @@ export interface ProviderModelOverrides {
  */
 export type UserModelOverrides = Record<string, ProviderModelOverrides>
 
-export const DEEPSEEK_PRIMARY_MODELS = ['deepseek-v4-flash', 'deepseek-v4-pro']
+export const DEEPSEEK_PRIMARY_MODELS = [
+  'deepseek-v4-flash',
+  'deepseek-v4-pro',
+  'deepseek-v4.1-flash',
+  'deepseek-v4.1-pro',
+]
 
 export const DEEPSEEK_LEGACY_MODEL_MAPPING_NAMES = [
   'deepseek-chat',

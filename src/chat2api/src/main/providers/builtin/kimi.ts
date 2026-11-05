@@ -25,12 +25,18 @@ export const kimiConfig: BuiltinProviderConfig = {
     'Priority': 'u=1, i',
   },
   enabled: true,
-  description: 'Kimi K2.6 AI assistant by Moonshot, supports thinking mode and web search',
+  description: 'Kimi AI assistant by Moonshot, supports K2.6 / K2.8 Preview / K3 / K3.1, thinking and web search',
   supportedModels: [
     'Kimi-K2.6',
+    'Kimi-K2.8-Preview',
+    'Kimi-K3',
+    'Kimi-K3.1',
   ],
   modelMappings: {
     'Kimi-K2.6': 'kimi-k2.6',
+    'Kimi-K2.8-Preview': 'kimi-k2.8-preview',
+    'Kimi-K3': 'kimi-k3',
+    'Kimi-K3.1': 'kimi-k3.1',
   },
   credentialFields: [
     {

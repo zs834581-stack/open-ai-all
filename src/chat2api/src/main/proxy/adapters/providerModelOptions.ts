@@ -15,7 +15,7 @@ export function resolveDeepSeekChatOptions(
   _prompt: string = ''
 ): DeepSeekChatOptions {
   const modelLower = request.model.toLowerCase()
-  const isProModel = modelLower.includes('deepseek-v4-pro') || modelLower.includes('expert')
+  const isProModel = modelLower.includes('pro') || modelLower.includes('expert')
   const isSearchAlias = modelLower.includes('search')
   const isThinkingAlias = modelLower.includes('think')
     || modelLower.includes('r1')
@@ -31,8 +31,21 @@ export function resolveDeepSeekChatOptions(
 
 export type KimiScenario = 'SCENARIO_K2D5' | 'SCENARIO_K2D6'
 
+/**
+ * 网页端 K2.8 / K3 场景值尚未公开抓包，暂按已支持的最新场景回落。
+ * 拿到真实值后只需替换这里的映射，模型名与别名层无需改动。
+ */
+const KIMI_SCENARIO_OVERRIDES: Record<string, KimiScenario> = {
+  'kimi-k2.8-preview': 'SCENARIO_K2D6',
+  'kimi-k3': 'SCENARIO_K2D6',
+  'kimi-k3.1': 'SCENARIO_K2D6',
+}
+
 export function resolveKimiScenario(model: string): KimiScenario {
-  return model.toLowerCase().includes('k2.6') ? 'SCENARIO_K2D6' : 'SCENARIO_K2D5'
+  const modelLower = model.toLowerCase()
+  const override = KIMI_SCENARIO_OVERRIDES[modelLower]
+  if (override) return override
+  return modelLower.includes('k2.5') ? 'SCENARIO_K2D5' : 'SCENARIO_K2D6'
 }
 
 export function createKimiChatPayload(options: {
