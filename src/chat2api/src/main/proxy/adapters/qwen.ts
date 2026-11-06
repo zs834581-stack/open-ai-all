@@ -17,6 +17,7 @@ import { createBaseChunk } from '../utils/streamToolHandler'
 import { getProviderToolProfile } from '../toolCalling/providerProfiles'
 import { ToolStreamParser } from '../toolCalling/ToolStreamParser'
 import type { ToolCallingPlan } from '../toolCalling/types'
+import { buildBrowserHeaders, generateQwenDeviceId } from '../fingerprint'
 
 /**
  * Check if content contains tool calls (both bracket and XML formats)
@@ -38,20 +39,16 @@ const MODEL_MAP: Record<string, string> = {
   'Qwen3-Coder': 'Qwen3-Coder',
 }
 
-const DEFAULT_HEADERS = {
-  Accept: 'application/json, text/event-stream, text/plain, */*',
-  'Accept-Language': 'zh-CN,zh;q=0.9',
-  'Cache-Control': 'no-cache',
-  Origin: 'https://www.qianwen.com',
-  Pragma: 'no-cache',
-  'Sec-Ch-Ua': '"Chromium";v="145", "Not(A:Brand";v="24", "Google Chrome";v="145"',
-  'Sec-Ch-Ua-Mobile': '?0',
-  'Sec-Ch-Ua-Platform': '"macOS"',
-  'Sec-Fetch-Dest': 'empty',
-  'Sec-Fetch-Mode': 'cors',
-  'Sec-Fetch-Site': 'same-site',
-  Referer: 'https://www.qianwen.com/',
-  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
+/**
+ * Qwen 请求头：每次返回带随机浏览器指纹的头部集合
+ */
+function qwenHeaders(): Record<string, string> {
+  return buildBrowserHeaders({
+    origin: 'https://www.qianwen.com',
+    referer: 'https://www.qianwen.com/',
+    accept: 'application/json, text/event-stream, text/plain, */*',
+    os: 'mac',
+  })
 }
 
 interface QwenMessage {
@@ -139,10 +136,10 @@ export class QwenAdapter {
   private getApiHeaders(ticket: string): Record<string, string> {
     return {
       Cookie: `tongyi_sso_ticket=${ticket}`,
-      ...DEFAULT_HEADERS,
+      ...qwenHeaders(),
       'Content-Type': 'application/json',
       'X-Platform': 'pc_tongyi',
-      'X-DeviceId': '5b68c267-cd8e-fd0e-148a-18345bc9a104',
+      'X-DeviceId': generateQwenDeviceId(),
     }
   }
 
@@ -153,7 +150,7 @@ export class QwenAdapter {
       device: 'pc',
       fr: 'pc',
       pr: 'qwen',
-      ut: '5b68c267-cd8e-fd0e-148a-18345bc9a104',
+      ut: generateQwenDeviceId(),
       la: 'zh_CN',
       tz: 'Asia/Shanghai',
       wv: '1',
@@ -418,7 +415,7 @@ export class QwenAdapter {
 
     const response = await this.axiosInstance.post(url, requestBody, {
       headers: {
-        ...DEFAULT_HEADERS,
+        ...qwenHeaders(),
         'Content-Type': 'application/json',
         Cookie: `tongyi_sso_ticket=${ticket}`,
       },

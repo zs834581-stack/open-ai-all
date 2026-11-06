@@ -20,23 +20,20 @@ import {
   createBaseChunk,
   ToolCallState 
 } from '../utils/streamToolHandler'
+import { buildBrowserHeaders, generateMiniMaxUuid } from '../fingerprint'
 
 const AGENT_BASE_URL = 'https://agent.minimaxi.com'
 
-const FAKE_HEADERS = {
-  Accept: 'application/json, text/plain, */*',
-  'Accept-Encoding': 'gzip, deflate, br, zstd',
-  'Accept-Language': 'zh-CN,zh;q=0.9',
-  'Cache-Control': 'no-cache',
-  Origin: 'https://agent.minimaxi.com',
-  Pragma: 'no-cache',
-  'Sec-Ch-Ua': '"Chromium";v="142", "Google Chrome";v="142", "Not_A Brand";v="99"',
-  'Sec-Ch-Ua-Mobile': '?0',
-  'Sec-Ch-Ua-Platform': '"macOS"',
-  'Sec-Fetch-Dest': 'empty',
-  'Sec-Fetch-Mode': 'cors',
-  'Sec-Fetch-Site': 'same-origin',
-  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
+/**
+ * MiniMax 请求头：每次返回带随机浏览器指纹的头部集合
+ */
+function minimaxHeaders(): Record<string, string> {
+  return buildBrowserHeaders({
+    origin: AGENT_BASE_URL,
+    referer: `${AGENT_BASE_URL}/`,
+    accept: 'application/json, text/plain, */*',
+    os: 'mac',
+  })
 }
 
 const FAKE_USER_DATA: Record<string, any> = {
@@ -259,7 +256,7 @@ export class MiniMaxAdapter {
       { uuid: randomUuid },
       {
         headers: {
-          ...FAKE_HEADERS,
+          ...minimaxHeaders(),
           'Content-Type': 'application/json',
           'Referer': `${AGENT_BASE_URL}/`,
           'token': this.jwtToken,
@@ -334,7 +331,7 @@ export class MiniMaxAdapter {
       headers: {
         Referer: `${AGENT_BASE_URL}/`,
         token: this.jwtToken,
-        ...FAKE_HEADERS,
+        ...minimaxHeaders(),
         'Content-Type': 'application/json',
         'x-timestamp': String(timestamp),
         'x-signature': signature,
@@ -393,7 +390,7 @@ export class MiniMaxAdapter {
       'content-type': 'application/json',
       Referer: 'https://agent.minimaxi.com/',
       token: this.jwtToken,
-      ...FAKE_HEADERS,
+      ...minimaxHeaders(),
       'x-timestamp': `${timestamp}`,
       'x-signature': signature,
       Accept: 'text/event-stream', // Must be after FAKE_HEADERS to override

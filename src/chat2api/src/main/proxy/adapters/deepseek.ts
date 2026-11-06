@@ -12,30 +12,30 @@ import type { Account, Provider } from '../../store/types'
 import { resolveDeepSeekChatOptions } from './providerModelOptions'
 import { getProviderToolProfile } from '../toolCalling/providerProfiles'
 import { conversationRegistry } from '../conversationRegistry'
+import { buildBrowserHeaders, generateDeepSeekCookie } from '../fingerprint'
 
 const DEEPSEEK_API_BASE = 'https://chat.deepseek.com/api'
 
 /** 会话创建去重：同一账号 + 同一会话键的并发请求共用一次创建 */
 const createSessionInflight = new Map<string, Promise<string>>()
 
-const FAKE_HEADERS = {
-  Accept: '*/*',
-  'Accept-Encoding': 'gzip, deflate, br, zstd',
-  'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6',
-  Origin: 'https://chat.deepseek.com',
-  Referer: 'https://chat.deepseek.com/',
-  'Sec-Ch-Ua': '"Not/A)Brand";v="99", "Chromium";v="148"',
-  'Sec-Ch-Ua-Mobile': '?0',
-  'Sec-Ch-Ua-Platform': '"macOS"',
-  'Sec-Fetch-Dest': 'empty',
-  'Sec-Fetch-Mode': 'cors',
-  'Sec-Fetch-Site': 'same-origin',
-  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
-  'X-App-Version': '2.0.0',
-  'X-Client-Locale': 'zh_CN',
-  'X-Client-Platform': 'web',
-  'x-Client-Timezone-Offset': '28800',
-  'X-Client-Version': '2.0.0',
+/**
+ * DeepSeek 请求头：每次调用返回带随机浏览器指纹的头部集合
+ * 原静态 FAKE_HEADERS 替换为动态生成，避免固定指纹触发风控
+ */
+function deepseekHeaders(): Record<string, string> {
+  return {
+    ...buildBrowserHeaders({
+      origin: 'https://chat.deepseek.com',
+      referer: 'https://chat.deepseek.com/',
+      accept: '*/*',
+    }),
+    'X-App-Version': '2.0.0',
+    'X-Client-Locale': 'zh_CN',
+    'X-Client-Platform': 'web',
+    'x-Client-Timezone-Offset': '28800',
+    'X-Client-Version': '2.0.0',
+  }
 }
 
 interface TokenInfo {
@@ -74,33 +74,7 @@ interface ChatCompletionRequest {
 
 const tokenCache = new Map<string, TokenInfo>()
 
-function generateRandomString(length: number, charset: string = 'alphanumeric'): string {
-  const sets = {
-    numeric: '0123456789',
-    alphabetic: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
-    alphanumeric: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
-    hex: '0123456789abcdef',
-  }
-  const chars = sets[charset as keyof typeof sets] || sets.alphanumeric
-  let result = ''
-  for (let i = 0; i < length; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length))
-  }
-  return result
-}
 
-function uuid(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0
-    const v = c === 'x' ? r : (r & 0x3) | 0x8
-    return v.toString(16)
-  })
-}
-
-function generateCookie(): string {
-  const timestamp = Date.now()
-  return `intercom-HWWAFSESTIME=${timestamp}; HWWAFSESID=${generateRandomString(18, 'hex')}; Hm_lvt_${uuid(false)}=${Math.floor(timestamp / 1000)},${Math.floor(timestamp / 1000)},${Math.floor(timestamp / 1000)}; Hm_lpvt_${uuid(false)}=${Math.floor(timestamp / 1000)}; _frid=${uuid(false)}; _fr_ssid=${uuid(false)}; _fr_pvid=${uuid(false)}`
-}
 
 function unixTimestamp(): number {
   return Math.floor(Date.now() / 1000)
@@ -135,7 +109,7 @@ export class DeepSeekAdapter {
     const result = await axios.get(`${DEEPSEEK_API_BASE}/v0/users/current`, {
       headers: {
         Authorization: `Bearer ${this.token}`,
-        ...FAKE_HEADERS,
+        ...deepseekHeaders(),
       },
       timeout: 15000,
       validateStatus: () => true,
@@ -204,8 +178,8 @@ export class DeepSeekAdapter {
       {
         headers: {
           Authorization: `Bearer ${token}`,
-          ...FAKE_HEADERS,
-          Cookie: generateCookie(),
+          ...deepseekHeaders(),
+          Cookie: generateDeepSeekCookie(),
         },
         timeout: 15000,
         validateStatus: () => true,
@@ -235,7 +209,7 @@ export class DeepSeekAdapter {
         {
           headers: {
             Authorization: `Bearer ${token}`,
-            ...FAKE_HEADERS,
+            ...deepseekHeaders(),
           },
           timeout: 15000,
           validateStatus: () => true,
@@ -265,7 +239,7 @@ export class DeepSeekAdapter {
       {
         headers: {
           Authorization: `Bearer ${token}`,
-          ...FAKE_HEADERS,
+          ...deepseekHeaders(),
         },
         timeout: 15000,
         validateStatus: () => true,
@@ -435,9 +409,9 @@ export class DeepSeekAdapter {
       {
         headers: {
           Authorization: `Bearer ${token}`,
-          ...FAKE_HEADERS,
+          ...deepseekHeaders(),
           Referer: `https://chat.deepseek.com/a/chat/s/${sessionId}`,
-          Cookie: generateCookie(),
+          Cookie: generateDeepSeekCookie(),
           'X-Ds-Pow-Response': challengeAnswer,
         },
         timeout: 120000,
@@ -463,7 +437,7 @@ export class DeepSeekAdapter {
         {
           headers: {
             Authorization: `Bearer ${token}`,
-            ...FAKE_HEADERS,
+            ...deepseekHeaders(),
           },
           timeout: 30000,
           validateStatus: () => true,

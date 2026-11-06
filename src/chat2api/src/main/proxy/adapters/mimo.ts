@@ -11,6 +11,7 @@ import type { ChatMessage } from '../types.ts'
 import { ToolStreamParser } from '../toolCalling/ToolStreamParser.ts'
 import type { ToolCallingPlan } from '../toolCalling/types.ts'
 import { getProviderToolProfile } from '../toolCalling/providerProfiles.ts'
+import { buildBrowserHeaders } from '../fingerprint'
 
 const MIMO_API_BASE = 'https://aistudio.xiaomimimo.com'
 
@@ -342,22 +343,14 @@ export class MimoAdapter {
 
   private buildHeaders(serviceToken: string, userId: string, phToken: string): Record<string, string> {
     return {
+      ...buildBrowserHeaders({
+        origin: MIMO_API_BASE,
+        referer: `${MIMO_API_BASE}/`,
+        accept: '*/*',
+      }),
       'Content-Type': 'application/json',
       Cookie: `serviceToken=${serviceToken}; userId=${userId}; xiaomichatbot_ph=${phToken}`,
-      Origin: MIMO_API_BASE,
-      Referer: `${MIMO_API_BASE}/`,
       'X-Timezone': 'Asia/Shanghai',
-      Accept: '*/*',
-      'Accept-Encoding': 'gzip, deflate, br, zstd',
-      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      'Cache-Control': 'no-cache',
-      Pragma: 'no-cache',
-      'Sec-Ch-Ua': '"Chromium";v="144", "Not(A:Brand";v="8", "Google Chrome";v="144"',
-      'Sec-Ch-Ua-Mobile': '?0',
-      'Sec-Ch-Ua-Platform': '"Windows"',
-      'Sec-Fetch-Dest': 'empty',
-      'Sec-Fetch-Mode': 'cors',
-      'Sec-Fetch-Site': 'same-origin',
     }
   }
 

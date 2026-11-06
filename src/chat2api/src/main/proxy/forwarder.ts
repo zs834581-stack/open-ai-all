@@ -25,6 +25,7 @@ import { ToolCallingEngine } from './toolCalling/ToolCallingEngine'
 import type { ToolCallingTransformResult } from './toolCalling/types'
 import { sessionManager } from './sessionManager'
 import { conversationRegistry } from './conversationRegistry'
+import { rateGate, getProviderRetryDelayMs } from './rateGate'
 import {
   createContextManagementService,
   SummaryGenerator,
@@ -233,10 +234,26 @@ export class RequestForwarder {
     const maxRetries = config.retryCount
 
     let lastError: string | undefined
+    let lastStatus: number | undefined
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      // 风控闸门：每次实际发请求前，等待该账号的最小间隔 + 抖动 + 令牌桶 + 冷却
+      await rateGate.forAccount(provider.id, account.id).wait()
       if (attempt > 0) {
-        await this.delay(5000)
+        // 429 风控退避：按厂商的退避基数做指数退避 + 抖动（避免多账号同步重试形成节奏峰值）
+        // config.retryDelayMs 作为全局覆盖（若设置），否则用厂商默认值
+        let waitMs: number
+        if (lastStatus === 429) {
+          const base = config.retryDelayMs && config.retryDelayMs > 0
+            ? config.retryDelayMs
+            : getProviderRetryDelayMs(provider.id)
+          waitMs = base * Math.pow(2, attempt - 1)
+          waitMs += Math.floor(Math.random() * (base / 2))
+          console.log(`[Forwarder] 429 backoff (${provider.id}): waiting ${waitMs}ms before retry ${attempt}`)
+        } else {
+          waitMs = 5000 * attempt
+        }
+        await this.delay(Math.min(waitMs, 120_000))
       }
 
       let modifiedRequest = request
@@ -294,10 +311,18 @@ export class RequestForwarder {
         const result = await this.doForward(modifiedRequest, account, provider, actualModel, context)
 
         if (result.success) {
+          rateGate.reportSuccess(provider.id, account.id)
           return result
         }
 
         lastError = result.error
+        lastStatus = result.status
+
+        // 429：进入账号冷却（rateGate），重试前先排队等冷却
+        if (result.status === 429) {
+          rateGate.reportThrottled(provider.id, account.id)
+          continue
+        }
 
         if (result.status && result.status < 500 && result.status !== 429) {
           break

@@ -18,25 +18,21 @@ import {
   createBaseChunk,
   ToolCallState 
 } from '../utils/streamToolHandler'
+import { buildBrowserHeaders, generateChromeFingerprint } from '../fingerprint'
 
 const ZAI_API_BASE = 'https://chat.z.ai'
 const X_FE_VERSION = 'prod-fe-1.0.241'
 
-const FAKE_HEADERS = {
-  Accept: '*/*',
-  'Accept-Encoding': 'gzip, deflate, br, zstd',
-  'Accept-Language': 'zh-CN,zh;q=0.9',
-  'Cache-Control': 'no-cache',
-  Origin: ZAI_API_BASE,
-  Pragma: 'no-cache',
-  'Sec-Ch-Ua': '"Chromium";v="144", "Not(A:Brand";v="8", "Google Chrome";v="144"',
-  'Sec-Ch-Ua-Mobile': '?0',
-  'Sec-Ch-Ua-Platform': '"Windows"',
-  'Sec-Fetch-Dest': 'empty',
-  'Sec-Fetch-Mode': 'cors',
-  'Sec-Fetch-Site': 'same-origin',
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
-  'X-FE-Version': X_FE_VERSION,
+/**
+ * Z.ai 请求头：每次返回带随机浏览器指纹的头部集合
+ */
+function zaiHeaders(): Record<string, string> {
+  return buildBrowserHeaders({
+    origin: ZAI_API_BASE,
+    referer: `${ZAI_API_BASE}/`,
+    accept: '*/*',
+    os: 'mac',
+  })
 }
 
 const SEARCH_CITATION_PATTERN = '【turn\\d+search\\d+】'
@@ -248,13 +244,11 @@ export class ZaiAdapter {
       requestBody,
       {
         headers: {
+          ...zaiHeaders(),
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
           'X-FE-Version': X_FE_VERSION,
           'Cookie': `token=${token}`,
-          Origin: ZAI_API_BASE,
-          Referer: `${ZAI_API_BASE}/`,
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
         },
         timeout: 15000,
         validateStatus: () => true,
@@ -279,7 +273,7 @@ export class ZaiAdapter {
         {
           headers: {
             Authorization: `Bearer ${token}`,
-            ...FAKE_HEADERS,
+            ...zaiHeaders(),
             Referer: `${ZAI_API_BASE}/`,
           },
           timeout: 15000,
@@ -306,7 +300,7 @@ export class ZaiAdapter {
         {
           headers: {
             Authorization: `Bearer ${token}`,
-            ...FAKE_HEADERS,
+            ...zaiHeaders(),
             Referer: `${ZAI_API_BASE}/`,
           },
           timeout: 30000,
@@ -474,8 +468,7 @@ export class ZaiAdapter {
       version: '0.0.1',
       platform: 'web',
       token,
-      user_agent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
-      language: 'zh-CN',
+      user_agent: generateChromeFingerprint().userAgent,      language: 'zh-CN',
       languages: 'zh-CN,zh',
       timezone: 'Asia/Shanghai',
       cookie_enabled: 'true',
@@ -512,24 +505,13 @@ export class ZaiAdapter {
       requestBody,
       {
         headers: {
-          'Accept': '*/*',
-          'Accept-Encoding': 'gzip, deflate, br, zstd',
-          'Accept-Language': 'zh-CN',
-          Authorization: `Bearer ${token}`,
+          ...zaiHeaders(),
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
           'X-Signature': signature,
           'X-FE-Version': X_FE_VERSION,
           'Cookie': `token=${token}`,
-          Origin: ZAI_API_BASE,
-          Referer: `${ZAI_API_BASE}/c/${chatId}`,
-          'Sec-Fetch-Dest': 'empty',
-          'Sec-Fetch-Mode': 'cors',
-          'Sec-Fetch-Site': 'same-origin',
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
-          'sec-ch-ua': '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
-          'sec-ch-ua-mobile': '?0',
-          'sec-ch-ua-platform': '"macOS"',
-          Priority: 'u=1, i',
+          'Priority': 'u=1, i',
         },
         responseType: 'stream',
         timeout: 120000,

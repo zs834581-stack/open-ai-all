@@ -1,23 +1,21 @@
 import { net } from 'electron'
 import { Readable } from 'stream'
 import { Account, Provider } from '../store/types'
+import { buildBrowserHeaders } from '../fingerprint'
 
 const PERPLEXITY_URL = 'https://www.perplexity.ai'
 const QUERY_ENDPOINT = `${PERPLEXITY_URL}/rest/sse/perplexity_ask`
 
-const FAKE_HEADERS: Record<string, string> = {
-  'Accept': 'text/event-stream',
-  'Accept-Encoding': 'gzip, deflate, br, zstd',
-  'Accept-Language': 'en-US,en;q=0.9',
-  'Cache-Control': 'no-cache',
-  'Origin': PERPLEXITY_URL,
-  'Sec-Ch-Ua': '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
-  'Sec-Ch-Ua-Mobile': '?0',
-  'Sec-Ch-Ua-Platform': '"macOS"',
-  'Sec-Fetch-Dest': 'empty',
-  'Sec-Fetch-Mode': 'cors',
-  'Sec-Fetch-Site': 'same-origin',
-  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+/**
+ * Perplexity 请求头：每次返回带随机浏览器指纹的头部集合
+ */
+function perplexityHeaders(): Record<string, string> {
+  return buildBrowserHeaders({
+    origin: PERPLEXITY_URL,
+    referer: `${PERPLEXITY_URL}/`,
+    accept: 'text/event-stream',
+    os: 'mac',
+  })
 }
 
 interface PerplexityMessage {
@@ -302,7 +300,7 @@ export class PerplexityAdapter {
     const referer = `${PERPLEXITY_URL}/`
 
     const headers: Record<string, string> = {
-      ...FAKE_HEADERS,
+      ...perplexityHeaders(),
       'Content-Type': 'application/json',
       'Cookie': `__Secure-next-auth.session-token=${this.cookie}`,
       'x-perplexity-request-reason': 'perplexity-query-state-provider',
@@ -431,19 +429,9 @@ export class PerplexityAdapter {
       const deleteUrl = `${PERPLEXITY_URL}/rest/thread/delete_thread_by_entry_uuid?version=2.18&source=default`
       
       const headers: Record<string, string> = {
-        'Accept': '*/*',
-        'Accept-Encoding': 'gzip, deflate, br, zstd',
-        'Accept-Language': 'en-US,en;q=0.9',
+        ...perplexityHeaders(),
         'Content-Type': 'application/json',
         'Cookie': this.buildCookieHeader(),
-        'Origin': PERPLEXITY_URL,
-        'Referer': `${PERPLEXITY_URL}/`,
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
-        'sec-ch-ua': '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"macOS"',
-        'sec-fetch-dest': 'empty',
-        'sec-fetch-mode': 'cors',
         'sec-fetch-site': 'same-origin',
         'x-app-apiclient': 'default',
         'x-app-apiversion': '2.18',
@@ -505,19 +493,9 @@ export class PerplexityAdapter {
     const deleteUrl = `${PERPLEXITY_URL}/rest/thread/delete_all_threads?version=2.18&source=default`
     
     const headers: Record<string, string> = {
-      'Accept': '*/*',
-      'Accept-Encoding': 'gzip, deflate, br, zstd',
-      'Accept-Language': 'en-US,en;q=0.9',
+      ...perplexityHeaders(),
       'Content-Type': 'application/json',
       'Cookie': this.buildCookieHeader(),
-      'Origin': PERPLEXITY_URL,
-      'Referer': `${PERPLEXITY_URL}/library`,
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
-      'sec-ch-ua': '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
-      'sec-ch-ua-mobile': '?0',
-      'sec-ch-ua-platform': '"macOS"',
-      'sec-fetch-dest': 'empty',
-      'sec-fetch-mode': 'cors',
       'sec-fetch-site': 'same-origin',
       'x-app-apiclient': 'default',
       'x-app-apiversion': '2.18',

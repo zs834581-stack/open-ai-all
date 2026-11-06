@@ -14,6 +14,7 @@ import { proxyStatusManager } from '../status'
 import { modelMapper } from '../modelMapper'
 import { conversationRegistry } from '../conversationRegistry'
 import { storeManager } from '../../store/store'
+import { rateGate } from '../rateGate'
 import { 
   isAnthropicToolFormat,
   transformResponseToAnthropic,
@@ -209,6 +210,13 @@ router.post('/completions', async (ctx: Context) => {
 
       if (result.status && result.status >= 400 && result.status !== 429) {
         loadBalancer.markAccountFailed(account.id)
+      }
+
+      // 429 风控上报：让 rateGate 冷却该账号，后续同账号新请求自动排队
+      if (result.status === 429) {
+        const retryAfter = ctx.headers['retry-after']
+        rateGate.reportThrottled(provider.id, account.id, retryAfter ? Number(retryAfter) : undefined)
+        console.log(`[Chat] 429 rate-limited on ${provider.id}/${account.id}, cooldown activated`)
       }
 
       ctx.status = result.status || 500

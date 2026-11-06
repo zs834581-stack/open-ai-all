@@ -6,6 +6,7 @@
 import { Account, Provider, LoadBalanceStrategy } from '../store/types'
 import { AccountSelection } from './types'
 import { storeManager } from '../store/store'
+import { rateGate } from './rateGate'
 
 /**
  * Load Balancer
@@ -107,7 +108,7 @@ export class LoadBalancer {
       }
 
       const accounts = storeManager.getAccountsByProviderId(provider.id, true)
-        .filter(account => this.isAccountAvailable(account))
+        .filter(account => this.isAccountAvailable(account, provider.id))
         .filter(account => !excludeFailed || !this.isAccountInFailure(account.id))
 
       console.log(`[LoadBalancer] Provider ${provider.name} (${provider.id}) has ${accounts.length} available accounts`)
@@ -181,12 +182,17 @@ export class LoadBalancer {
   /**
    * Check if account is available
    */
-  private isAccountAvailable(account: Account): boolean {
+  private isAccountAvailable(account: Account, providerId?: string): boolean {
     if (account.status !== 'active') {
       return false
     }
 
     if (account.dailyLimit && account.todayUsed && account.todayUsed >= account.dailyLimit) {
+      return false
+    }
+
+    // 跳过 rateGate 冷却中的账号（429 风控惩罚期间不可用）
+    if (providerId && rateGate.isCooling(providerId, account.id)) {
       return false
     }
 
@@ -326,7 +332,7 @@ export class LoadBalancer {
 
     for (const provider of providers) {
       const accounts = storeManager.getAccountsByProviderId(provider.id)
-        .filter(account => this.isAccountAvailable(account))
+        .filter(account => this.isAccountAvailable(account, provider.id))
 
       if (accounts.length > 0) {
         const effectiveModels = storeManager.getEffectiveModels(provider.id)

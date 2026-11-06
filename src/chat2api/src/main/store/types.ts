@@ -203,6 +203,8 @@ export interface AppConfig {
   requestTimeout: number
   /** Retry count */
   retryCount: number
+  /** 429/风控重试退避基数（毫秒）。0 = 使用厂商默认值（deepseek 20s / 其他 10s）；>0 = 全局覆盖所有厂商 */
+  retryDelayMs: number
   /** API Key list */
   apiKeys: ApiKey[]
   /** Whether to enable API Key authentication */
@@ -812,6 +814,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   requestLogConfig: DEFAULT_REQUEST_LOG_CONFIG,
   requestTimeout: 60000,
   retryCount: 3,
+  retryDelayMs: 0,
   apiKeys: [],
   enableApiKey: false,
   oauthProxyMode: 'system',

@@ -14,24 +14,22 @@ import { getProviderToolProfile } from '../toolCalling/providerProfiles'
 import { ToolStreamParser } from '../toolCalling/ToolStreamParser'
 import type { ToolCallingPlan } from '../toolCalling/types'
 import { conversationRegistry } from '../conversationRegistry'
+import { buildBrowserHeaders } from '../fingerprint'
 
 const KIMI_API_BASE = 'https://www.kimi.com'
 
-const FAKE_HEADERS: Record<string, string> = {
-  Accept: '*/*',
-  'Accept-Encoding': 'gzip, deflate, br, zstd',
-  'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-  'Cache-Control': 'no-cache',
-  Pragma: 'no-cache',
-  Origin: KIMI_API_BASE,
-  'Sec-Ch-Ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-  'Sec-Ch-Ua-Mobile': '?0',
-  'Sec-Ch-Ua-Platform': '"Windows"',
-  'Sec-Fetch-Dest': 'empty',
-  'Sec-Fetch-Mode': 'cors',
-  'Sec-Fetch-Site': 'same-origin',
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-  Priority: 'u=1, i',
+/**
+ * Kimi 请求头：每次返回带随机浏览器指纹的头部集合
+ */
+function kimiHeaders(): Record<string, string> {
+  return {
+    ...buildBrowserHeaders({
+      origin: KIMI_API_BASE,
+      referer: `${KIMI_API_BASE}/`,
+      accept: '*/*',
+    }),
+    Priority: 'u=1, i',
+  }
 }
 
 interface TokenInfo {
@@ -354,7 +352,7 @@ export class KimiAdapter {
         headers: {
           Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/connect+json',
-          ...FAKE_HEADERS,
+          ...kimiHeaders(),
         },
         timeout: 120000,
         validateStatus: () => true,
@@ -392,7 +390,7 @@ export class KimiAdapter {
           headers: {
             Authorization: `Bearer ${accessToken}`,
             'Content-Type': 'application/json',
-            ...FAKE_HEADERS,
+            ...kimiHeaders(),
           },
           timeout: 15000,
           validateStatus: () => true,
@@ -420,7 +418,7 @@ export class KimiAdapter {
         headers: {
           Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
-          ...FAKE_HEADERS,
+          ...kimiHeaders(),
         },
         timeout: 15000,
         validateStatus: () => true,
@@ -452,7 +450,7 @@ export class KimiAdapter {
         headers: {
           Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
-          ...FAKE_HEADERS,
+          ...kimiHeaders(),
         },
         timeout: 30000,
         validateStatus: () => true,
